@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/scheduler.dart';
 import 'dart:async';
 
 import 'package:flutter/services.dart';
@@ -15,47 +16,70 @@ class MyApp extends StatefulWidget {
   State<MyApp> createState() => _MyAppState();
 }
 
-class _MyAppState extends State<MyApp> {
-  String _platformVersion = 'Unknown';
-  final _triengineInteropFlutterPlugin = TriengineInteropFlutterPlugin();
+class _MyAppState extends State<MyApp> with SingleTickerProviderStateMixin {
+  int? _textureId;
+  Ticker? _ticker;
+  final _interopPlugin = TriengineInteropFlutterPlugin();
 
   @override
   void initState() {
     super.initState();
-    initPlatformState();
+    initPlugin().catchError((error) {
+      print("Error initializing plugin: $error");
+    });
+  }
+
+  @override
+  void dispose() {
+    _interopPlugin.destroySurface().then((_) {
+      print("plugin deinitialized");
+    }).catchError((error) {
+      print("Error destroying plugin: $error");
+    });
+    _textureId = null;
+    _ticker?.dispose();
+    super.dispose();
   }
 
   // Platform messages are asynchronous, so we initialize in an async method.
-  Future<void> initPlatformState() async {
-    String platformVersion;
-    // Platform messages may fail, so we use a try/catch PlatformException.
-    // We also handle the message potentially returning null.
-    try {
-      platformVersion =
-          await _triengineInteropFlutterPlugin.getPlatformVersion() ?? 'Unknown platform version';
-    } on PlatformException {
-      platformVersion = 'Failed to get platform version.';
-    }
+  Future<void> initPlugin() async {
 
-    // If the widget was removed from the tree while the asynchronous platform
-    // message was in flight, we want to discard the reply rather than calling
-    // setState to update our non-existent appearance.
-    if (!mounted) return;
+    final textureId = await _interopPlugin.createSurface(640, 640);
+
+    if (!mounted) { return; }
 
     setState(() {
-      _platformVersion = platformVersion;
+      _textureId = textureId;
     });
+
+    _ticker = this.createTicker((Duration now) {
+      if (mounted && _textureId != null) {
+        _interopPlugin.updateSurface();
+      }
+    });
+
+    _ticker?.start();
   }
 
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
       home: Scaffold(
+        backgroundColor: Colors.black,
         appBar: AppBar(
-          title: const Text('Plugin example app'),
+          title: const Text('Flutter + Triengine Interoperability Demo'),
         ),
         body: Center(
-          child: Text('Running on: $_platformVersion\n'),
+          child: SizedBox(
+            width: 640,
+            height: 640,
+            child: _textureId != null
+                ? Texture(
+                    textureId: _textureId!,
+                    filterQuality: FilterQuality.none,
+                  )
+                : const CircularProgressIndicator(),
+          ),
         ),
       ),
     );

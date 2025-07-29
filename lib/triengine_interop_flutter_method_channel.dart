@@ -7,7 +7,7 @@ import 'triengine_interop_flutter_platform_interface.dart';
 class MethodChannelTriengineInteropFlutterPlugin extends TriengineInteropFlutterPluginPlatform {
   /// The method channel used to interact with the native platform.
   @visibleForTesting
-  final methodChannel = const MethodChannel('triengine_interop_flutter');
+  final methodChannel = const MethodChannel('triengine_interop_flutter/channel');
 
   @override
   Future<String?> getPlatformVersion() async {

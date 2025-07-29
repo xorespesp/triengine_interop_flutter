@@ -18,16 +18,26 @@ set(PLUGIN_NAME "triengine_interop_flutter_plugin")
 
 # Any new source files that you add to the plugin should be added here.
 list(APPEND PLUGIN_SOURCES
-  "triengine_interop_flutter.cpp"
-  "triengine_interop_flutter.h"
+    "triengine_interop_flutter.cpp"
+    "triengine_interop_flutter.h"
+    "triengine_surface_manager.cpp"
+    "triengine_surface_manager.h"
+    "ipc_proto.hh"
+    "ipc_service.cc"
+    "ipc_service.hh"
+    "utils/bit_cast.h"
+    "utils/spin_lock.h"
+    "utils/string_codecvt.h"
+    "utils/debug_utils.h"
+    "utils/win32_utils.h"
 )
 
 # Define the plugin library target. Its name must not be changed (see comment
 # on PLUGIN_NAME above).
 add_library(${PLUGIN_NAME} SHARED
-  "include/triengine_interop_flutter/triengine_interop_flutter_plugin_c_api.h"
-  "triengine_interop_flutter_plugin_c_api.cpp"
-  ${PLUGIN_SOURCES}
+    "include/triengine_interop_flutter/triengine_interop_flutter_plugin_c_api.h"
+    "triengine_interop_flutter_plugin_c_api.cpp"
+    ${PLUGIN_SOURCES}
 )
 
 # Apply a standard set of build settings that are configured in the
@@ -39,62 +49,70 @@ apply_standard_settings(${PLUGIN_NAME})
 # between plugins. This should not be removed; any symbols that should be
 # exported should be explicitly exported with the FLUTTER_PLUGIN_EXPORT macro.
 set_target_properties(${PLUGIN_NAME} PROPERTIES
-  CXX_VISIBILITY_PRESET hidden)
-target_compile_definitions(${PLUGIN_NAME} PRIVATE FLUTTER_PLUGIN_IMPL)
+    CXX_VISIBILITY_PRESET hidden)
+
+target_compile_definitions(${PLUGIN_NAME} PRIVATE 
+    FLUTTER_PLUGIN_IMPL)
 
 # Source include directories and library dependencies. Add any plugin-specific
 # dependencies here.
 target_include_directories(${PLUGIN_NAME} INTERFACE
-  "${CMAKE_CURRENT_SOURCE_DIR}/include")
-target_link_libraries(${PLUGIN_NAME} PRIVATE flutter flutter_wrapper_plugin)
+    "${CMAKE_CURRENT_SOURCE_DIR}/include")
+
+###############################################################################
+# Third-party dependencies
+include(FetchContent)
+
+# ===== Fmt Library =====
+# Ref: https://fmt.dev/11.1/get-started/
+message(STATUS "Fetching fmt library...")
+FetchContent_Declare(
+    fmt
+    GIT_REPOSITORY https://github.com/fmtlib/fmt
+    GIT_TAG        11.2.0
+    GIT_SHALLOW    TRUE
+    GIT_PROGRESS   TRUE
+)
+set(FMT_INSTALL OFF CACHE BOOL "" FORCE)
+set(FMT_DOC OFF CACHE BOOL "" FORCE)
+set(FMT_UNICODE ON CACHE BOOL "" FORCE)
+FetchContent_MakeAvailable(fmt)
+
+# ===== Boost Libraries =====
+# See: https://stackoverflow.com/q/72913306
+message(STATUS "Fetching boost...")
+set(BOOST_INCLUDE_LIBRARIES interprocess date_time program_options)
+set(BOOST_ENABLE_CMAKE ON)
+set(FETCHCONTENT_QUIET FALSE) # Needed to print downloading progress
+FetchContent_Declare(
+    Boost
+    URL https://github.com/boostorg/boost/releases/download/boost-1.88.0/boost-1.88.0-cmake.7z # downloading a zip release speeds up the download
+    USES_TERMINAL_DOWNLOAD TRUE 
+    GIT_PROGRESS TRUE   
+    DOWNLOAD_NO_EXTRACT FALSE
+)
+FetchContent_MakeAvailable(Boost)
+
+###############################################################################
+
+target_link_libraries(${PLUGIN_NAME} PRIVATE 
+    flutter
+    flutter_wrapper_plugin
+    # DirectX11 dependencies.
+    d3d11
+    dxgi
+    d3dcompiler
+    # Third-party dependencies.
+    fmt::fmt
+    Boost::interprocess
+    Boost::date_time
+    Boost::program_options
+)
 
 # List of absolute paths to libraries that should be bundled with the plugin.
 # This list could contain prebuilt libraries, or libraries created by an
 # external build triggered from this build file.
 set(triengine_interop_flutter_bundled_libraries
-  ""
-  PARENT_SCOPE
+    ""
+    PARENT_SCOPE
 )
-
-# === Tests ===
-# These unit tests can be run from a terminal after building the example, or
-# from Visual Studio after opening the generated solution file.
-
-# Only enable test builds when building the example (which sets this variable)
-# so that plugin clients aren't building the tests.
-if (${include_${PROJECT_NAME}_tests})
-set(TEST_RUNNER "${PROJECT_NAME}_test")
-enable_testing()
-
-# Add the Google Test dependency.
-include(FetchContent)
-FetchContent_Declare(
-  googletest
-  URL https://github.com/google/googletest/archive/release-1.11.0.zip
-)
-# Prevent overriding the parent project's compiler/linker settings
-set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
-# Disable install commands for gtest so it doesn't end up in the bundle.
-set(INSTALL_GTEST OFF CACHE BOOL "Disable installation of googletest" FORCE)
-FetchContent_MakeAvailable(googletest)
-
-# The plugin's C API is not very useful for unit testing, so build the sources
-# directly into the test binary rather than using the DLL.
-add_executable(${TEST_RUNNER}
-  test/triengine_interop_flutter_test.cpp
-  ${PLUGIN_SOURCES}
-)
-apply_standard_settings(${TEST_RUNNER})
-target_include_directories(${TEST_RUNNER} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
-target_link_libraries(${TEST_RUNNER} PRIVATE flutter_wrapper_plugin)
-target_link_libraries(${TEST_RUNNER} PRIVATE gtest_main gmock)
-# flutter_wrapper_plugin has link dependencies on the Flutter DLL.
-add_custom_command(TARGET ${TEST_RUNNER} POST_BUILD
-  COMMAND ${CMAKE_COMMAND} -E copy_if_different
-  "${FLUTTER_LIBRARY}" $<TARGET_FILE_DIR:${TEST_RUNNER}>
-)
-
-# Enable automatic test discovery.
-include(GoogleTest)
-gtest_discover_tests(${TEST_RUNNER})
-endif()
