@@ -22,7 +22,7 @@ class ipc_session : public std::enable_shared_from_this<ipc_session>
 public:
     using notify_packet_callback = std::function<void(uint32_t pck_id, std::string_view pck_data)>;
     using request_packet_callback = std::function<void(uint32_t req_pck_id, std::string_view req_pck_data, std::vector<uint8_t>& rep_pck_data)>;
-    using disconnect_callback = std::function<void(std::shared_ptr<ipc_session>)>;
+    using close_callback = std::function<void(std::shared_ptr<ipc_session>)>;
 
 private:
     struct session_state_t
@@ -37,7 +37,7 @@ private:
 public:
     ipc_session(
         std::unique_ptr<detail::ipc_session_base> base,
-        disconnect_callback disconn_cb
+        close_callback close_cb
     );
 
     ~ipc_session();
@@ -78,14 +78,14 @@ private:
 
     notify_packet_callback _cb_notify_pck;
     request_packet_callback _cb_req_pck;
-    disconnect_callback _cb_disconn;
+    close_callback _cb_close;
 };
 
 class ipc_server : public std::enable_shared_from_this<ipc_server>
 {
 public:
-    using session_connected_callback = std::function<void(std::shared_ptr<ipc_session> session)>;
-    using session_disconnected_callback = std::function<void(std::shared_ptr<ipc_session> session)>;
+    using session_connect_callback = std::function<void(std::shared_ptr<ipc_session> session)>;
+    using session_disconnect_callback = std::function<void(std::shared_ptr<ipc_session> session)>;
 
 private:
     struct context_t;
@@ -102,12 +102,12 @@ public:
     void start(std::string_view server_name, size_t max_sessions);
     void stop();
 
-    void set_session_connected_callback(session_connected_callback cb) {
-        _on_session_connected = std::move(cb);
+    void set_session_connect_callback(session_connect_callback cb) {
+        _on_session_connect = std::move(cb);
     }
 
-    void set_session_disconnected_callback(session_disconnected_callback cb) {
-        _on_session_disconnected = std::move(cb);
+    void set_session_disconnect_callback(session_disconnect_callback cb) {
+        _on_session_disconnect = std::move(cb);
     }
 
 private:
@@ -120,8 +120,8 @@ private:
     std::thread _accept_thread;
     std::atomic_bool _is_listening{ false };
 
-    session_connected_callback _on_session_connected;
-    session_disconnected_callback _on_session_disconnected;
+    session_connect_callback _on_session_connect;
+    session_disconnect_callback _on_session_disconnect;
 };
 
 class ipc_client : public std::enable_shared_from_this<ipc_client>

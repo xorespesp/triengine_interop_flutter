@@ -1,5 +1,6 @@
 #pragma once
 #include <Windows.h>
+#include <dxgiformat.h>
 #include <vector>
 #include <string_view>
 #include <stdexcept>
@@ -49,27 +50,34 @@ namespace ipc_proto
 
     enum mouse_button_type
     {
-        MOUSEBTN_L,
-        MOUSEBTN_R,
-        MOUSEBTN_M,
+        MOUSE_L, // left mouse button
+        MOUSE_R, // right mouse button
+        MOUSE_M, // middle mouse button
     };
 
-    enum modkey_button_type
+    enum modifier_button_type : uint16_t
     {
-        MODKEY_SHIFT = 1 << 0,
-        MODKEY_CTRL = 1 << 1,
-        MODKEY_ALT = 1 << 2,
-        MODKEY_CAPSLOCK = 1 << 3,
-        MODKEY_NUMLOCK = 1 << 4,
+        // key button modifiers
+        MOD_KEY_SHIFT = 1u << 0,
+        MOD_KEY_CTRL = 1u << 1,
+        MOD_KEY_ALT = 1u << 2,
+        MOD_KEY_CAPSLOCK = 1u << 3,
+        MOD_KEY_NUMLOCK = 1u << 4,
+        // ...
+        
+        // mouse button modifiers
+        MOD_MOUSE_L = 1u << 13,
+        MOD_MOUSE_R = 1u << 14,
+        MOD_MOUSE_M = 1u << 15,
     };
 
-    // Add bitwise operators for modkey_button_type  
-    inline modkey_button_type operator|(modkey_button_type lhs, modkey_button_type rhs)
+    // Add bitwise operators for modifier_button_type  
+    inline modifier_button_type operator|(modifier_button_type lhs, modifier_button_type rhs)
     {
-        return static_cast<modkey_button_type>(static_cast<int>(lhs) | static_cast<int>(rhs));
+        return static_cast<modifier_button_type>(static_cast<int>(lhs) | static_cast<int>(rhs));
     }
 
-    inline modkey_button_type& operator|=(modkey_button_type& lhs, modkey_button_type rhs)
+    inline modifier_button_type& operator|=(modifier_button_type& lhs, modifier_button_type rhs)
     {
         lhs = lhs | rhs;
         return lhs;
@@ -111,7 +119,8 @@ namespace ipc_proto
     enum class packet_type
     {
         invalid = 0,
-        shared_render_context,
+        init_request,
+        init_response,
         frame_resize_request,
         frame_resize_response,
         mouse_move_event,
@@ -127,14 +136,18 @@ namespace ipc_proto
 
     namespace packets
     {
-        // packet_type::render_context
-        struct shared_render_context_t
+        struct init_request_t
+        {
+            int32_t frame_width;
+            int32_t frame_height;
+            DXGI_FORMAT frame_format;
+        };
+
+        struct init_response_t
         {
             DWORD renderer_process_id;
             LUID target_adapter_luid;
             HANDLE shared_texture_handle;
-            int32_t shared_texture_width;
-            int32_t shared_texture_height;
         };
 
         struct frame_resize_request_t
@@ -151,30 +164,30 @@ namespace ipc_proto
         // packet_type::mouse_move_event
         struct mouse_move_event_t
         {
-            int32_t x;
-            int32_t y;
-            struct {
-                bool ctrl_pressed : 1;
-                bool shift_pressed : 1;
-                bool l_btn_pressed : 1;
-                bool r_btn_pressed : 1;
-                bool m_btn_pressed : 1;
-            } mods;
+            // Win32 screen coordinates
+            // (0, 0) is the top-left corner of the screen area.
+            int32_t x, y;
+
+            modifier_button_type mods;
         };
 
         struct mouse_scroll_event_t
         {
+            // same as GLFW's scroll value
+            // `float(GET_WHEEL_DELTA_WPARAM(wParam)) / float(WHEEL_DELTA)`
             float yoffset;
         };
 
         // packet_type::mouse_click_event
         struct mouse_button_event_t
         {
-            int32_t x;
-            int32_t y;
+            // Win32 screen coordinates
+            // (0, 0) is the top-left corner of the screen area.
+            int32_t x, y;
+
             mouse_button_type button;
             button_action_type action;
-            modkey_button_type mods;
+            modifier_button_type mods;
         };
 
     } // namespace

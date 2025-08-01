@@ -332,20 +332,31 @@ namespace detail
 
 ipc_session::ipc_session(
     std::unique_ptr<detail::ipc_session_base> base, 
-    disconnect_callback disconn_cb)
+    close_callback close_cb)
     : _base{ std::move(base) }
-    , _cb_disconn{ std::move(disconn_cb) }
+    , _cb_close{ std::move(close_cb) }
 {
     LOG_TRACE("{} ENTER", __func__);
+
     if (!_base) {
         throw std::invalid_argument{ "ipc_session base cannot be null" };
     }
+
+    LOG_TRACE("{} LEAVE", __func__);
 }
 
 ipc_session::~ipc_session()
 {
     LOG_TRACE("{} ENTER", __func__);
-    this->close();
+
+    // NOTE: We can't directly call `close()` here, because `shared_from_this()` requires the object to be alive.
+    // see: https://stackoverflow.com/q/28338978/3865427
+    _is_alive = false;
+    if (_recv_thread.joinable()) {
+        _recv_thread.join();
+    }
+
+    LOG_TRACE("{} LEAVE", __func__);
 }
 
 std::string_view ipc_session::get_name() const
@@ -512,7 +523,12 @@ void ipc_session::_do_close()
     const bool old_alive_flag = _is_alive.exchange(false);
     if (_recv_thread.joinable()) {
         LOG_TRACE("terminating recv thread..");
-        _recv_thread.join();
+        _recv_thread.join(); // NOTE: `_cb_close` will be called in this thread.
+    } else {
+        // recv thread not running, calling disconnect callback directly
+        if (_cb_close) {
+            _cb_close(shared_from_this());
+        }
     }
 
     if (old_alive_flag) {
@@ -642,8 +658,8 @@ void ipc_session::_do_recv()
 
     } // while
 
-    if (_cb_disconn) {
-        _cb_disconn(shared_from_this());
+    if (_cb_close) {
+        _cb_close(shared_from_this());
     }
 
     LOG_TRACE("IPC session recv terminated.");
@@ -685,7 +701,7 @@ ipc_server::~ipc_server()
 
 void ipc_server::start(std::string_view server_name, const size_t max_sessions)
 {
-    std::scoped_lock lk{ _ctx_lock };
+    std::scoped_lock ctx_lk{ _ctx_lock };
     if (_ctx) {
         throw std::runtime_error{ "already started" };
     }
@@ -740,7 +756,7 @@ void ipc_server::stop()
     // Move the current context to a temporary variable to safely remove it 
     // (to prevent deadlock due to lock contention)
     context_unique_ptr old_ctx; {
-        std::scoped_lock lk{ _ctx_lock };
+        std::scoped_lock ctx_lk{ _ctx_lock };
         old_ctx = std::move(_ctx);
     }
 
@@ -797,7 +813,7 @@ void ipc_server::_do_accept()
                 [weak_self = std::weak_ptr{ shared_from_this() }](std::shared_ptr<ipc_session> session)
                 {
                     const std::string session_name{ session->get_name() };
-                    LOG_INFO("Session {} disconnected. Removing from server.", session_name);
+                    LOG_INFO("Session {} closed. Removing from server.", session_name);
 
                     auto self = weak_self.lock();
                     if (!self) {
@@ -805,16 +821,21 @@ void ipc_server::_do_accept()
                         return;
                     }
 
-                    std::unique_lock lk{ self->_ctx_lock };
-                    if (self->_ctx) {
-                        std::scoped_lock sessions_lk{ self->_ctx->sessions_mutex };
+                    std::unique_lock ctx_lk{ self->_ctx_lock };
+                    if (self->_ctx)
+                    {
+                        std::unique_lock sessions_lk{ self->_ctx->sessions_mutex };
                         self->_ctx->sessions.erase(session_name);
-                        lk.unlock();
+
+                        // Unlock the lock before invoking the callback to avoid deadlock
+                        sessions_lk.unlock();
+                        ctx_lk.unlock();
 
                         // Call the disconnect callback only if the session is 
                         // NOT forcibly terminated by an explicit `stop()` call on the server side.
-                        if (self->_on_session_disconnected) {
-                            self->_on_session_disconnected(session);
+                        auto session_disconn_cb = self->_on_session_disconnect;
+                        if (session_disconn_cb) {
+                            session_disconn_cb(session);
                         }
                     }
                 });
@@ -824,10 +845,13 @@ void ipc_server::_do_accept()
 
         LOG_INFO("New session accepted! (name: {})", new_session_name);
 
-        new_session->start();
+        // Instead of calling `ipc_session::start()` here, call it manually from the session connect callback.
+        //new_session->start();
 
-        if (_on_session_connected) {
-            _on_session_connected(new_session);
+        if (_on_session_connect) {
+            _on_session_connect(new_session);
+        } else {
+            LOG_WARN("No session connect callback set, cannot notify about new session.");
         }
 
         // Send a handshake response(ACK) to the client
@@ -874,7 +898,7 @@ ipc_client::~ipc_client()
 
 bool ipc_client::is_connected() const noexcept
 {
-    std::scoped_lock lk{ _ctx_lock };
+    std::scoped_lock ctx_lk{ _ctx_lock };
     return _ctx && _ctx->session && _ctx->session->is_alive();
 }
 
@@ -882,7 +906,7 @@ bool ipc_client::connect(
     const std::string_view server_name, 
     const std::chrono::milliseconds timeout)
 {
-    std::scoped_lock lk{ _ctx_lock };
+    std::scoped_lock ctx_lk{ _ctx_lock };
     if (_ctx) {
         LOG_ERROR("Already connected or connection in progress.");
         return false;
@@ -935,13 +959,13 @@ bool ipc_client::connect(
                 return;
             }
 
-            disconnect_callback cb; {
-                std::scoped_lock lk{ self->_ctx_lock };
-                cb = self->_on_disconnect;
+            disconnect_callback disconn_cb; {
+                std::scoped_lock ctx_lk{ self->_ctx_lock };
+                disconn_cb = self->_on_disconnect;
             }
             
-            if (cb) {
-                cb();
+            if (disconn_cb) {
+                disconn_cb();
             }
         });
     new_session->set_notify_callback(_on_notify);
@@ -962,7 +986,7 @@ void ipc_client::disconnect()
     // Move the current context to a temporary variable to safely remove it 
     // (to prevent deadlock due to lock contention)
     context_unique_ptr old_ctx; {
-        std::scoped_lock lk{ _ctx_lock };
+        std::scoped_lock ctx_lk{ _ctx_lock };
         old_ctx = std::move(_ctx);
     }
 
@@ -972,7 +996,7 @@ void ipc_client::disconnect()
 }
 
 void ipc_client::set_notify_callback(notify_packet_callback cb) {
-    std::scoped_lock lk{ _ctx_lock };
+    std::scoped_lock ctx_lk{ _ctx_lock };
     _on_notify = std::move(cb);
     if (_ctx && _ctx->session) {
         _ctx->session->set_notify_callback(_on_notify);
@@ -980,7 +1004,7 @@ void ipc_client::set_notify_callback(notify_packet_callback cb) {
 }
 
 void ipc_client::set_request_callback(request_packet_callback cb) {
-    std::scoped_lock lk{ _ctx_lock };
+    std::scoped_lock ctx_lk{ _ctx_lock };
     _on_request = std::move(cb);
     if (_ctx && _ctx->session) {
         _ctx->session->set_request_callback(_on_request);
@@ -988,7 +1012,7 @@ void ipc_client::set_request_callback(request_packet_callback cb) {
 }
 
 void ipc_client::set_disconnect_callback(disconnect_callback cb) {
-    std::scoped_lock lk{ _ctx_lock };
+    std::scoped_lock ctx_lk{ _ctx_lock };
     _on_disconnect = std::move(cb);
 }
 
@@ -996,7 +1020,7 @@ std::errc ipc_client::send_notify(
     const void* const payload, 
     const size_t payload_size)
 {
-    std::scoped_lock lk{ _ctx_lock };
+    std::scoped_lock ctx_lk{ _ctx_lock };
     if (!_ctx || !_ctx->session) {
         return std::errc::not_connected;
     }
@@ -1013,7 +1037,7 @@ std::errc ipc_client::send_request_sync(
     std::vector<uint8_t>& response,
     const std::chrono::milliseconds timeout)
 {
-    std::scoped_lock lk{ _ctx_lock };
+    std::scoped_lock ctx_lk{ _ctx_lock };
     if (!_ctx || !_ctx->session) {
         return std::errc::not_connected;
     }
