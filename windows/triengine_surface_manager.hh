@@ -5,8 +5,8 @@
 #include <d3dcompiler.h>
 #include <wrl/client.h> // Microsoft::WRL::ComPtr
 
-#include "utils/spin_lock.h"
-#include "utils/win32_utils.h"
+#include "utils/spin_lock.hh"
+#include "utils/win32_utils.hh"
 #include "ipc_proto.hh"
 #include "ipc_service.hh"
 

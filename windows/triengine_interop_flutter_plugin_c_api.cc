@@ -2,8 +2,8 @@
 
 #include <flutter/plugin_registrar_windows.h>
 
-#include "triengine_interop_flutter.h"
-#include "utils/debug_utils.h"
+#include "triengine_interop_flutter.hh"
+#include "utils/debug_utils.hh"
 
 void TriengineInteropFlutterPluginCApiRegisterWithRegistrar(
     FlutterDesktopPluginRegistrarRef registrar)

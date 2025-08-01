@@ -4,7 +4,7 @@
 #include <vector>
 #include <string_view>
 #include <stdexcept>
-#include "utils/bit_cast.h"
+#include "utils/bit_cast.hh"
 
 namespace ipc_proto
 {

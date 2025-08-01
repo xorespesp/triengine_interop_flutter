@@ -18,25 +18,25 @@ set(PLUGIN_NAME "triengine_interop_flutter_plugin")
 
 # Any new source files that you add to the plugin should be added here.
 list(APPEND PLUGIN_SOURCES
-    "triengine_interop_flutter.cpp"
-    "triengine_interop_flutter.h"
-    "triengine_surface_manager.cpp"
-    "triengine_surface_manager.h"
+    "triengine_interop_flutter.cc"
+    "triengine_interop_flutter.hh"
+    "triengine_surface_manager.cc"
+    "triengine_surface_manager.hh"
     "ipc_proto.hh"
     "ipc_service.cc"
     "ipc_service.hh"
-    "utils/bit_cast.h"
-    "utils/spin_lock.h"
-    "utils/string_codecvt.h"
-    "utils/debug_utils.h"
-    "utils/win32_utils.h"
+    "utils/bit_cast.hh"
+    "utils/spin_lock.hh"
+    "utils/string_codecvt.hh"
+    "utils/debug_utils.hh"
+    "utils/win32_utils.hh"
 )
 
 # Define the plugin library target. Its name must not be changed (see comment
 # on PLUGIN_NAME above).
 add_library(${PLUGIN_NAME} SHARED
     "include/triengine_interop_flutter/triengine_interop_flutter_plugin_c_api.h"
-    "triengine_interop_flutter_plugin_c_api.cpp"
+    "triengine_interop_flutter_plugin_c_api.cc"
     ${PLUGIN_SOURCES}
 )
 

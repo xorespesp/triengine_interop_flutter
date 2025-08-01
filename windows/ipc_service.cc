@@ -11,7 +11,7 @@
 #include <boost/interprocess/containers/string.hpp>
 #include <boost/date_time/posix_time/posix_time.hpp>
 
-#include "utils/debug_utils.h"
+#include "utils/debug_utils.hh"
 
 namespace boost_ipc = boost::interprocess;
 

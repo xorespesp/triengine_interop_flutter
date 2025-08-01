@@ -1,5 +1,5 @@
-#include "triengine_surface_manager.h"
-#include "utils/debug_utils.h"
+#include "triengine_surface_manager.hh"
+#include "utils/debug_utils.hh"
 
 #include <array>
 namespace

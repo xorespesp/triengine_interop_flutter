@@ -5,7 +5,7 @@
 #include <fmt/format.h>
 #include <fmt/xchar.h>
 #include <cstdlib>
-#include "string_codecvt.h"
+#include "string_codecvt.hh"
 
 // Concat two arguments.
 #define __PP_CONCAT(X, Y) X ## Y

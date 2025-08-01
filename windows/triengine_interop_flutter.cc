@@ -1,4 +1,4 @@
-#include "triengine_interop_flutter.h"
+#include "triengine_interop_flutter.hh"
 
 // This must be included before many other Windows headers.
 #include <windows.h>
@@ -9,7 +9,7 @@
 #include <memory>
 #include <sstream>
 
-#include "utils/debug_utils.h"
+#include "utils/debug_utils.hh"
 
 namespace triengine_interop_flutter
 {

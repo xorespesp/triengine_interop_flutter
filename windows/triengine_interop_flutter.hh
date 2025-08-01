@@ -7,7 +7,7 @@
 #include <memory>
 #include <mutex>
 
-#include "triengine_surface_manager.h"
+#include "triengine_surface_manager.hh"
 
 namespace triengine_interop_flutter
 {
