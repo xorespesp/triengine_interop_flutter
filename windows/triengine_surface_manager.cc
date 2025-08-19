@@ -1,6 +1,8 @@
 #include "triengine_surface_manager.hh"
 #include "utils/debug_utils.hh"
 
+#include <d3dcompiler.h>
+#include <vector>
 #include <array>
 namespace
 {
@@ -79,7 +81,7 @@ bool triengine_surface_manager::create(
     const std::string_view renderer_ipc_server_name,
     const int32_t frame_width,
     const int32_t frame_height,
-    const DXGI_FORMAT frame_format)
+    const FlutterDesktopPixelFormat frame_format)
 {
     std::scoped_lock lk{ _api_lock };
     
@@ -88,17 +90,31 @@ bool triengine_surface_manager::create(
         return false;
     }
 
+    const DXGI_FORMAT frame_dxgi_format = [frame_format]() -> DXGI_FORMAT {
+        switch (frame_format) {
+        case kFlutterDesktopPixelFormatBGRA8888: return DXGI_FORMAT_B8G8R8A8_UNORM;
+        case kFlutterDesktopPixelFormatRGBA8888: return DXGI_FORMAT_R8G8B8A8_UNORM;
+        default: return DXGI_FORMAT_UNKNOWN;
+        }
+    }();
+
+    if (frame_dxgi_format == DXGI_FORMAT_UNKNOWN) {
+        LOG_ERROR("Unsupported frame format {}", static_cast<int>(frame_format));
+        return false;
+    }
+
     if (!this->_initialize(
         renderer_ipc_server_name,
         frame_width,
         frame_height,
-        frame_format))
+        frame_dxgi_format))
     {
         LOG_ERROR("Failed to initialize surface manager");
         return false;
     }
 
     _fl_created = true;
+    LOG_DEBUG("Surface manager created successfully.");
     return true;
 }
 
@@ -141,13 +157,15 @@ void triengine_surface_manager::destroy()
     _dx11_render_texture_handle.reset();
     _dx11_render_texture.Reset();
     _dx11_shared_texture_copy.Reset();
-    _dxgi_keyed_mutex.Reset();
+    _dxgi_shared_texture_mutex.Reset();
     _dx11_shared_texture.Reset();
     _dx11_device_context2.Reset();
     _dx11_device2.Reset();
 
     _renderer_process_handle.reset();
     _ipc_cli.reset();
+
+    LOG_DEBUG("Surface manager destroyed successfully.");
 }
 
 bool triengine_surface_manager::send_mouse_button_event(
@@ -247,7 +265,7 @@ bool triengine_surface_manager::render_frame()
     //                            이 경우, KeyedMutex와 SharedSurface 둘 다 해제한 후 재생성해야 함.
     //       Ref: https://learn.microsoft.com/en-us/windows/win32/api/dxgi/nf-dxgi-idxgikeyedmutex-acquiresync
     switch (
-        const HRESULT sync_hr = _dxgi_keyed_mutex->AcquireSync(0/* Key */, 10/* Wait Timeout */);
+        const HRESULT sync_hr = _dxgi_shared_texture_mutex->AcquireSync(0/* Key */, 10/* Wait Timeout */);
     sync_hr
         ) {
     case WAIT_OBJECT_0: // KeyedMutex를 성공적으로 획득했으므로 렌더링 작업 진행 가능
@@ -256,7 +274,7 @@ bool triengine_surface_manager::render_frame()
             _dx11_shared_texture_copy.Get(), 
             _dx11_shared_texture.Get()
         );
-        if (FAILED(_dxgi_keyed_mutex->ReleaseSync(0/* Key */))) { // 텍스처 사용이 끝났으므로 KeyedMutex 잠금 해제
+        if (FAILED(_dxgi_shared_texture_mutex->ReleaseSync(0/* Key */))) { // 텍스처 사용이 끝났으므로 KeyedMutex 잠금 해제
             LOG_ERROR("Failed to release keyed mutex.");
             return false;
         }
@@ -337,7 +355,7 @@ bool triengine_surface_manager::resize_frame(
 
     packet_view pck_view{ rep_bytes.data(), rep_bytes.size() };
     const auto resize_rep = pck_view.body<ipc_proto::packets::frame_resize_response_t>();
-    LOG_TRACE("frame resize response -> resource handle: {}", resize_rep->shared_texture_handle);
+    LOG_TRACE("frame resize response -> surface handle: {}", resize_rep->surface_handle);
 
     //
     // 새로운 리소스들을 임시 로컬 변수로 생성
@@ -354,14 +372,14 @@ bool triengine_surface_manager::resize_frame(
     // 새 공유 텍스처 생성
     new_dx11_shared_texture = open_shared_texture_from_native_handle(
         _dx11_device2,
-        resize_rep->shared_texture_handle, // IPC로 받은 새로운 핸들
+        resize_rep->surface_handle, // IPC로 받은 새로운 핸들
         _renderer_process_handle.get()
     );
     if (!new_dx11_shared_texture) {
         LOG_ERROR("Failed to open shared texture from native handle");
         return false;
     }
-    LOG_DEBUG("Successfully opened shared texture from native handle. (handle: {})", resize_rep->shared_texture_handle);
+    LOG_DEBUG("Successfully opened surface from native handle. (handle: {})", resize_rep->surface_handle);
 
     // 새 KeyedMutex 생성
     if (FAILED(new_dx11_shared_texture.As(&new_dxgi_keyed_mutex))) {
@@ -371,13 +389,13 @@ bool triengine_surface_manager::resize_frame(
 
     // 새 공유 텍스처 복사본 생성
     D3D11_TEXTURE2D_DESC sharedTexCopyDesc{};
-    new_dx11_shared_texture->GetDesc(&sharedTexCopyDesc); // 공유 텍스처의 현재 속성을 가져옴
+    new_dx11_shared_texture->GetDesc(&sharedTexCopyDesc); // Same frame size & format
     ASSERT(sharedTexCopyDesc.Width == static_cast<UINT>(frame_width));
     ASSERT(sharedTexCopyDesc.Height == static_cast<UINT>(frame_height));
-    sharedTexCopyDesc.Usage = D3D11_USAGE_DEFAULT; // 일반적인 GPU 읽기/쓰기 용도
-    sharedTexCopyDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE; // 셰이더에서 읽을 수 있도록 설정
-    sharedTexCopyDesc.CPUAccessFlags = 0; // CPU 접근 없음
-    sharedTexCopyDesc.MiscFlags = 0; // 공유 플래그 제거
+    sharedTexCopyDesc.Usage = D3D11_USAGE_DEFAULT;
+    sharedTexCopyDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+    sharedTexCopyDesc.CPUAccessFlags = 0; // No cpu access
+    sharedTexCopyDesc.MiscFlags = 0; // No misc flags
     if (FAILED(_dx11_device2->CreateTexture2D(
         &sharedTexCopyDesc,
         nullptr,
@@ -416,7 +434,7 @@ bool triengine_surface_manager::resize_frame(
             return false;
         }
 
-        LOG_DEBUG("Created shared texture handle: {:p}", new_dx11_render_texture_handle.get());
+        LOG_DEBUG("Recreated shared texture handle: {:p}", new_dx11_render_texture_handle.get());
     }
 
     // 새 SRV 생성 (공유 텍스처 복사본에서 생성)
@@ -448,7 +466,7 @@ bool triengine_surface_manager::resize_frame(
     _dx11_rtv.Swap(new_dx11_rtv);
     _dx11_srv.Swap(new_dx11_srv);
     _dx11_shared_texture.Swap(new_dx11_shared_texture);
-    _dxgi_keyed_mutex.Swap(new_dxgi_keyed_mutex);
+    _dxgi_shared_texture_mutex.Swap(new_dxgi_keyed_mutex);
     _dx11_shared_texture_copy.Swap(new_dx11_shared_texture_copy);
     _dx11_render_texture.Swap(new_dx11_render_texture);
     _dx11_render_texture_handle.swap(new_dx11_render_texture_handle);
@@ -465,7 +483,7 @@ bool triengine_surface_manager::_initialize(
     const std::string_view renderer_ipc_server_name,
     const int32_t frame_width, 
     const int32_t frame_height, 
-    const DXGI_FORMAT frame_format)
+    const DXGI_FORMAT frame_dxgi_format)
 {
     //
     // 임시 변수들로 모든 리소스를 먼저 생성
@@ -493,10 +511,9 @@ bool triengine_surface_manager::_initialize(
     packet_builder<ipc_proto::packets::init_request_t> init_req{ ipc_proto::packet_type::init_request };
     init_req.body()->frame_width = frame_width;
     init_req.body()->frame_height = frame_height;
-    init_req.body()->frame_format = frame_format;
 
-    LOG_DEBUG("Sending init request to renderer server... (frame size: {}x{}, format: {})"
-        , frame_width, frame_height, static_cast<int32_t>(frame_format)
+    LOG_DEBUG("Sending init request to renderer server... (frame size: {}x{})"
+        , frame_width, frame_height
     );
     std::vector<uint8_t> init_rep_bytes;
     if (std::errc{} != new_ipc_cli->send_request_sync(
@@ -510,11 +527,11 @@ bool triengine_surface_manager::_initialize(
 
     packet_view init_rep_pck_view{ init_rep_bytes.data(), init_rep_bytes.size() };
     const auto init_rep = init_rep_pck_view.body<ipc_proto::packets::init_response_t>();
-    LOG_DEBUG("Received init response. (pid: {}, adapter: {:x}-{:x}, resource handle: {})"
+    LOG_DEBUG("Received init response. (pid: {}, adapter: {:x}-{:x}, surface handle: {})"
         , init_rep->renderer_process_id
         , init_rep->target_adapter_luid.HighPart
         , init_rep->target_adapter_luid.LowPart
-        , init_rep->shared_texture_handle
+        , init_rep->surface_handle
     );
 
     LOG_DEBUG("Opening renderer process handle...");
@@ -596,13 +613,13 @@ bool triengine_surface_manager::_initialize(
     // 공유 텍스처 핸들 Open
     ComPtr<ID3D11Texture2D> new_dx11_shared_texture = open_shared_texture_from_native_handle(
         new_dx11_device2,
-        init_rep->shared_texture_handle, // IPC로 받은 새로운 핸들
+        init_rep->surface_handle, // IPC로 받은 새로운 핸들
         new_renderer_process_handle.get()
     );
     if (new_dx11_shared_texture) {
-        LOG_DEBUG("Successfully opened shared texture from native handle. (handle: {})", init_rep->shared_texture_handle);
+        LOG_DEBUG("Successfully opened surface handle: {}", init_rep->surface_handle);
     } else {
-        LOG_ERROR("Failed to open shared texture from native handle");
+        LOG_ERROR("Failed to open surface handle");
         return false;
     }
 
@@ -617,11 +634,12 @@ bool triengine_surface_manager::_initialize(
     ComPtr<ID3D11Texture2D> new_dx11_shared_texture_copy;
     {
         D3D11_TEXTURE2D_DESC sharedTexCopyDesc;
-        new_dx11_shared_texture->GetDesc(&sharedTexCopyDesc); // 공유 텍스처의 현재 속성을 가져옴
-        sharedTexCopyDesc.Usage = D3D11_USAGE_DEFAULT; // 일반적인 GPU 읽기/쓰기 용도
-        sharedTexCopyDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE; // 셰이더에서 읽을 수 있도록 설정
-        sharedTexCopyDesc.CPUAccessFlags = 0; // CPU 접근 없음
-        sharedTexCopyDesc.MiscFlags = 0; // 공유 플래그 제거
+        new_dx11_shared_texture->GetDesc(&sharedTexCopyDesc);
+        ASSERT(sharedTexCopyDesc.Format == DXGI_FORMAT_R8G8B8A8_UNORM); // Ensure shared texture format is expected format (RGBA)
+        sharedTexCopyDesc.Usage = D3D11_USAGE_DEFAULT;
+        sharedTexCopyDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+        sharedTexCopyDesc.CPUAccessFlags = 0; // No CPU access
+        sharedTexCopyDesc.MiscFlags = 0; // No misc flags
         if (FAILED(new_dx11_device2->CreateTexture2D(
             &sharedTexCopyDesc, 
             nullptr, 
@@ -632,21 +650,21 @@ bool triengine_surface_manager::_initialize(
         }
     }
 
-    // 화면 렌더링용 렌더링 텍스처 생성
+    // Flutter 엔진에 전달할 렌더 텍스처 생성
     ComPtr<ID3D11Texture2D> new_dx11_render_texture;
     {
         D3D11_TEXTURE2D_DESC renderTexDesc{};
         renderTexDesc.Width = static_cast<UINT>(frame_width);
         renderTexDesc.Height = static_cast<UINT>(frame_height);
+        renderTexDesc.Format = frame_dxgi_format;
         renderTexDesc.MipLevels = 1;
         renderTexDesc.ArraySize = 1;
-        renderTexDesc.Format = frame_format;
         renderTexDesc.SampleDesc.Count = 1;
         renderTexDesc.SampleDesc.Quality = 0;
         renderTexDesc.Usage = D3D11_USAGE_DEFAULT;
         renderTexDesc.BindFlags = D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE;
         renderTexDesc.CPUAccessFlags = 0;
-        renderTexDesc.MiscFlags = D3D11_RESOURCE_MISC_SHARED;
+        renderTexDesc.MiscFlags = D3D11_RESOURCE_MISC_SHARED; // <- for `kFlutterDesktopGpuSurfaceTypeDxgiSharedHandle`
         if (FAILED(new_dx11_device2->CreateTexture2D(&renderTexDesc, nullptr, &new_dx11_render_texture))) {
             LOG_ERROR("Failed to create render texture");
             return false;
@@ -674,11 +692,10 @@ bool triengine_surface_manager::_initialize(
         LOG_DEBUG("Created shared texture handle: {:p}", new_dx11_render_texture_handle.get());
     }
 
-    // Full-screen Quad 렌더링을 위한 셰이더 및 리소스 생성
-    // OpenGL의 공유 텍스처를 y축 기준으로 뒤집어서 렌더링하기 위한 screen quad 셰이더 코드
-    static const std::string shaderCode = R"hlsl(
-        Texture2D tx : register(t0);
-        SamplerState smp : register(s0);
+    // Base full-screen quad rendering shader template with preprocessor conditionals
+    static const std::string shaderTemplate = R"hlsl(
+        Texture2D g_texture : register(t0);
+        SamplerState g_sampler : register(s0);
 
         struct VS_OUT {
             float4 pos : SV_POSITION;
@@ -697,69 +714,95 @@ bool triengine_surface_manager::_initialize(
         }
 
         float4 PS(VS_OUT input) : SV_TARGET {
-            return tx.Sample(smp, float2(input.uv.x, 1.0 - input.uv.y)); // flip Y-axis
-            // return tx.Sample(smp, input.uv);
+            float2 uv = input.uv;
+            
+        #ifdef FLIP_Y_AXIS
+            // Flip Y-axis (if needed)
+            uv.y = 1.0 - uv.y;
+        #endif
+            
+            float4 color = g_texture.Sample(g_sampler, uv);
+            
+        #ifdef CONVERT_RGBA_TO_BGRA
+            color = float4(color.b, color.g, color.r, color.a); // Swap R and B channels
+        #endif
+            
+            return color;
         }
     )hlsl";
 
-    ComPtr<ID3DBlob> vsBlob, psBlob, errBlob;
-    HRESULT hr = ::D3DCompile(
-        shaderCode.c_str(), shaderCode.size(),
-        nullptr, nullptr, nullptr,
-        "VS",
-        "vs_5_0",
-        0, 0,
-        &vsBlob, &errBlob
-    );
-    if (FAILED(hr)) {
-        LOG_ERROR("Failed to compile vertex shader({}): {}"
-            , hr
-            , errBlob ? static_cast<const char*>(errBlob->GetBufferPointer()) : "???"
-        );
-        return false;
-    }
+    // Helper to compile shader with specific defines
+    constexpr auto compileShader =
+        [](const std::string& shader_template,
+           const std::string& entry_point,
+           const std::string& target,
+           const D3D_SHADER_MACRO* const defines = nullptr) -> ComPtr<ID3DBlob>
+        {
+            ComPtr<ID3DBlob> psBlob, errBlob;
+            HRESULT hr = ::D3DCompile(
+                shader_template.c_str(), 
+                shader_template.size(),
+                nullptr, defines, nullptr,
+                entry_point.c_str(), target.c_str(), 
+                0, 0,
+                &psBlob, &errBlob
+            );
+            if (FAILED(hr)) {
+                LOG_ERROR("Failed to compile {} shader({:08X}): {}"
+                    , target.c_str()
+                    , hr
+                    , static_cast<const char*>(errBlob->GetBufferPointer())
+                );
+                return nullptr;
+            }
+            return psBlob;
+        };
 
-    hr = ::D3DCompile(
-        shaderCode.c_str(), shaderCode.size(),
-        nullptr, nullptr, nullptr,
-        "PS",
-        "ps_5_0",
-        0, 0,
-        &psBlob,
-        &errBlob
-    );
-    if (FAILED(hr)) {
-        LOG_ERROR("Failed to compile pixel shader({}): {}"
-            , hr
-            , errBlob ? static_cast<const char*>(errBlob->GetBufferPointer()) : "???"
-        );
-        return false;
-    }
-
-    // 버텍스 셰이더 생성
+    // Compile vertex shader
     ComPtr<ID3D11VertexShader> new_dx11_vertex_shader;
-    if (FAILED(new_dx11_device2->CreateVertexShader(
-        vsBlob->GetBufferPointer(), 
-        vsBlob->GetBufferSize(), 
-        nullptr, 
-        &new_dx11_vertex_shader))) {
-        LOG_ERROR("Failed to create vertex shader");
-        return false;
+    {
+        auto vsBlob = compileShader(shaderTemplate, "VS", "vs_5_0");
+        ASSERT_HR(new_dx11_device2->CreateVertexShader(
+            vsBlob->GetBufferPointer(),
+            vsBlob->GetBufferSize(),
+            nullptr,
+            &new_dx11_vertex_shader
+        ));
     }
 
-    // 픽셀 셰이더 생성
+    // Compile pixel shader
     ComPtr<ID3D11PixelShader> new_dx11_pixel_shader;
-    if (FAILED(new_dx11_device2->CreatePixelShader(
-        psBlob->GetBufferPointer(), 
-        psBlob->GetBufferSize(), 
-        nullptr, 
-        &new_dx11_pixel_shader))) {
-        LOG_ERROR("Failed to create pixel shader");
-        return false;
+    {
+        std::vector<D3D_SHADER_MACRO> defines;
+
+        // Need Y-flip because OpenGL uses bottom-left origin while DirectX uses top-left
+        defines.push_back({ "FLIP_Y_AXIS", "1" }); 
+
+        // NOTE: No manual color-conversion needed when rendering RGBA texture (OpenGL) to BGRA render target (Flutter),
+        // GPU handles the conversion automatically.
+        // when you load the texture, it gets 'swizzled' if needed to the standard Red, Green, and Blue channels
+        // and when you write to the render target the same thing happens depending on the format.
+        // so manual pixel shader conversion would cause double-swapping and corrupt colors.
+        // Ref: https://stackoverflow.com/a/46369577/3865427
+        // if (frame_dxgi_format == DXGI_FORMAT_B8G8R8A8_UNORM) {
+        //     defines.push_back({ "CONVERT_RGBA_TO_BGRA", "1" }); // Would cause double conversion!
+        // }
+
+        // Add a null terminator to the defines array
+        if (!defines.empty()) {
+            defines.push_back({ nullptr, nullptr });
+        }
+
+        auto psBlob = compileShader(shaderTemplate, "PS", "ps_5_0", defines.data());
+        ASSERT_HR(new_dx11_device2->CreatePixelShader(
+            psBlob->GetBufferPointer(), 
+            psBlob->GetBufferSize(),
+            nullptr, 
+            &new_dx11_pixel_shader
+        ));
     }
 
-    // D3D11 샘플러 상태 생성 (OpenGL의 sampler2D와 유사한 개념)
-    // (텍스처 필터링 및 주소 모드 설정)
+    // D3D11 Sampler State 생성 (OpenGL의 sampler2D와 유사한 개념)
     ComPtr<ID3D11SamplerState> new_dx11_sampler_state;
     {
         D3D11_SAMPLER_DESC sampDesc{};
@@ -812,7 +855,7 @@ bool triengine_surface_manager::_initialize(
     _dx11_device2 = std::move(new_dx11_device2);
     _dx11_device_context2 = std::move(new_dx11_device_context2);
     _dx11_shared_texture = std::move(new_dx11_shared_texture);
-    _dxgi_keyed_mutex = std::move(new_dxgi_keyed_mutex);
+    _dxgi_shared_texture_mutex = std::move(new_dxgi_keyed_mutex);
     _dx11_shared_texture_copy = std::move(new_dx11_shared_texture_copy);
     _dx11_render_texture = std::move(new_dx11_render_texture);
     _dx11_render_texture_handle = std::move(new_dx11_render_texture_handle);

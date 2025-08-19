@@ -4,6 +4,23 @@
 
 #include "flutter/generated_plugin_registrant.h"
 
+////////////////////////////////////////////////////////////////////////////////
+// Enable discrete GPU usage for inter-process rendering
+extern "C" {
+    // Force NVIDIA discrete GPU usage on Optimus systems
+    // Required for sharing rendering surfaces between processes:
+    // Since the source renderer process performs rendering on a high-performance (external) GPU,
+    // and the Flutter process must receive and display the shared surface from that rendering.
+    // Therefore, both processes MUST use the same GPU adapter to perform inter-process rendering operations.
+    __declspec(dllexport) DWORD NvOptimusEnablement = 0x00000001;
+
+    // Force AMD discrete GPU usage on PowerXpress systems
+    // Same requirement for AMD dual-GPU systems to ensure consistent
+    // GPU adapter selection for inter-process surface sharing.
+    __declspec(dllexport) int AmdPowerXpressRequestHighPerformance = 1;
+}
+////////////////////////////////////////////////////////////////////////////////
+
 FlutterWindow::FlutterWindow(const flutter::DartProject& project)
     : project_(project) {}
 

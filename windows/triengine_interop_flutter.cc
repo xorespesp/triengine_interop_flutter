@@ -64,21 +64,24 @@ namespace triengine_interop_flutter
             const auto width = std::get<int32_t>(args->at(flutter::EncodableValue{ "width" }));
             const auto height = std::get<int32_t>(args->at(flutter::EncodableValue{ "height" }));
 
+            constexpr FlutterDesktopGpuSurfaceType flutter_gpu_surface_type = 
+                kFlutterDesktopGpuSurfaceTypeDxgiSharedHandle;
+                //kFlutterDesktopGpuSurfaceTypeD3d11Texture2D; // NOTE: Not supported in flutter 3.32.6
+
+            constexpr FlutterDesktopPixelFormat flutter_gpu_surface_texture_format = 
+                kFlutterDesktopPixelFormatBGRA8888;
+                //kFlutterDesktopGpuSurfaceFormatRGBA8888; // NOTE: Not supported in flutter 3.32.6
+
             surface_manager_ = std::make_unique<triengine_surface_manager>();
             if (!surface_manager_->create(
                 renderer_ipc_server_name,
                 width, 
                 height, 
-                DXGI_FORMAT_B8G8R8A8_UNORM))
+                flutter_gpu_surface_texture_format))
             {
                 result->Error("SURFACE_INIT_FAILED", "Failed to initialize surface manager.");
                 return;
             }
-
-            const FlutterDesktopGpuSurfaceType surface_type = 
-                kFlutterDesktopGpuSurfaceTypeDxgiSharedHandle;
-                //kFlutterDesktopGpuSurfaceTypeD3d11Texture2D;
-
             {
                 std::scoped_lock lk{ render_lock_ };
                 gpu_surface_desc_ = std::make_unique<FlutterDesktopGpuSurfaceDescriptor>();
@@ -94,7 +97,7 @@ namespace triengine_interop_flutter
                 // `FlutterDesktopGpuSurfaceTextureCallback` and registering a
                 // `release_callback` for decrementing the reference count once it has been opened.
                 gpu_surface_desc_->handle = surface_manager_->get_surface_handle(); // <-- 핵심
-                gpu_surface_desc_->format = kFlutterDesktopPixelFormatBGRA8888;
+                gpu_surface_desc_->format = flutter_gpu_surface_texture_format;
                 gpu_surface_desc_->width = surface_manager_->get_width();
                 gpu_surface_desc_->height = surface_manager_->get_height();
                 gpu_surface_desc_->visible_width = gpu_surface_desc_->width;
@@ -108,7 +111,7 @@ namespace triengine_interop_flutter
 
             // flutter::TextureVariant (flutter::GpuSurfaceTexture) 생성
             texture_variant_ = std::make_unique<flutter::TextureVariant>(flutter::GpuSurfaceTexture{
-                surface_type,
+                flutter_gpu_surface_type,
                 [this](size_t width, size_t height) -> const FlutterDesktopGpuSurfaceDescriptor* {
                     // Flutter가 이 텍스처를 그리려고 할 때마다 이 콜백 함수가 호출된다.
                     // 이 콜백의 목적은 텍스처의 현재 상태(핸들, 크기)를 담은 Descriptor를 반환하는 것이다.

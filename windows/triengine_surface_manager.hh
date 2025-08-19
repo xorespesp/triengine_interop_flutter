@@ -1,18 +1,17 @@
 #pragma once
-#include <d3d11.h>
 #include <dxgi1_2.h> // DXGI 1.2 API header
 #include <d3d11_2.h> // DX11.2 API header
-#include <d3dcompiler.h>
 #include <wrl/client.h> // Microsoft::WRL::ComPtr
+#include <flutter_texture_registrar.h> // FlutterDesktopPixelFormat
+
+#include <string_view>
+#include <memory>
+#include <atomic>
 
 #include "utils/spin_lock.hh"
 #include "utils/win32_utils.hh"
 #include "ipc_proto.hh"
 #include "ipc_service.hh"
-
-#include <string_view>
-#include <memory>
-#include <atomic>
 
 using Microsoft::WRL::ComPtr;
 
@@ -37,7 +36,7 @@ public:
         std::string_view renderer_ipc_server_name,
         int32_t frame_width, 
         int32_t frame_height, 
-        DXGI_FORMAT frame_format
+        FlutterDesktopPixelFormat frame_format
     );
 
     void destroy();
@@ -78,7 +77,7 @@ private:
         std::string_view renderer_ipc_server_name,
         int32_t frame_width, 
         int32_t frame_height, 
-        DXGI_FORMAT frame_format
+        DXGI_FORMAT frame_dxgi_format
     );
 
 private:
@@ -93,7 +92,7 @@ private:
     ComPtr<ID3D11Device2> _dx11_device2;
     ComPtr<ID3D11DeviceContext2> _dx11_device_context2;
     ComPtr<ID3D11Texture2D> _dx11_shared_texture; // shared texture from the renderer process
-    ComPtr<IDXGIKeyedMutex> _dxgi_keyed_mutex; // KeyedMutex for the shared texture
+    ComPtr<IDXGIKeyedMutex> _dxgi_shared_texture_mutex; // KeyedMutex for the shared texture
     ComPtr<ID3D11Texture2D> _dx11_shared_texture_copy; // copy of the shared texture (temporary texture)
     ComPtr<ID3D11Texture2D> _dx11_render_texture; // render texture, to be used in Flutter
     utils::unique_handle _dx11_render_texture_handle; // shared handle for the render texture (to be used in Flutter)
