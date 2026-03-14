@@ -51,11 +51,15 @@ int _calculateModifierKeysWithMouse(int mouseButtons) {
 class TriengineSurface extends StatefulWidget {
   final String rendererIpcServerName;
   final Size size;
+  final double devicePixelRatio;
+  final FilterQuality filterQuality;
 
   const TriengineSurface({ 
     super.key, 
     required this.rendererIpcServerName,
     required this.size, 
+    this.devicePixelRatio = 1.0, // Default to 1.0 for logical pixel coordinates
+    this.filterQuality = FilterQuality.none, // Default to none for better performance
   });
 
   @override
@@ -83,7 +87,7 @@ class _TriengineSurfaceState extends State<TriengineSurface> with SingleTickerPr
   void initState() {
     super.initState();
     _createSurface().catchError((error) {
-      print("Error initializing surface: $error");
+      debugPrint("Error initializing surface: $error");
     });
   }
 
@@ -99,7 +103,7 @@ class _TriengineSurfaceState extends State<TriengineSurface> with SingleTickerPr
     // Check if renderer server name has changed - requires surface recreation
     // TODO: Use controller pattern?
     if (widget.rendererIpcServerName != oldWidget.rendererIpcServerName) {
-      print("Renderer server name changed from '${oldWidget.rendererIpcServerName}' to '${widget.rendererIpcServerName}' - scheduling recreation");
+      debugPrint("Renderer server name changed from '${oldWidget.rendererIpcServerName}' to '${widget.rendererIpcServerName}' - scheduling recreation");
       
       // Debounce recreation to prevent rapid changes
       // Recreation is performed when idle for 300ms after the last change.
@@ -107,7 +111,7 @@ class _TriengineSurfaceState extends State<TriengineSurface> with SingleTickerPr
       _recreateDebounceTimer = Timer(const Duration(milliseconds: 300), () {
         if (mounted) {
           _recreateSurfaceWithLoading().catchError((error) {
-            print("Error recreating surface: $error");
+            debugPrint("Error recreating surface: $error");
             if (mounted) {
               setState(() {
                 _isRecreating = false;
@@ -126,9 +130,9 @@ class _TriengineSurfaceState extends State<TriengineSurface> with SingleTickerPr
     }
     
     if (_textureId != null && !_isRecreating) {
-      // Check if size has actually changed
-      if (widget.size != oldWidget.size) {
-        print("Size changed from ${oldWidget.size} to ${widget.size} - scheduling resize");
+      // Check if Size or DevicePixelRatio has actually changed
+      if (widget.size != oldWidget.size || widget.devicePixelRatio != oldWidget.devicePixelRatio) {
+        debugPrint("Size or DevicePixelRatio changed from ${oldWidget.size} / ${oldWidget.devicePixelRatio} to ${widget.size} / ${widget.devicePixelRatio} - scheduling resize");
         
         // Debounce resize to prevent rapid changes during window dragging
         // Resize is performed when idle for 100ms after the last change.
@@ -136,7 +140,7 @@ class _TriengineSurfaceState extends State<TriengineSurface> with SingleTickerPr
         _resizeDebounceTimer = Timer(const Duration(milliseconds: 100), () {
           if (mounted && _textureId != null) {
             _resizeSurfaceWithLoading(widget.size).catchError((error) {
-              print("Error resizing surface: $error");
+              debugPrint("Error resizing surface: $error");
               if (mounted) {
                 setState(() {
                   _isResizing = false;
@@ -161,21 +165,36 @@ class _TriengineSurfaceState extends State<TriengineSurface> with SingleTickerPr
     _resizeDebounceTimer?.cancel();
     
     _destroySurface().catchError((error) {
-      print("Error deinitializing surface: $error");
+      debugPrint("Error deinitializing surface: $error");
     });
     _textureId = null;
     _ticker?.dispose();
     super.dispose();
   }
 
+  // Helper method to convert logical Size to physical Size
+  Size _getPhysicalSize(Size logicalSize) {
+    return Size(
+      (logicalSize.width * widget.devicePixelRatio).roundToDouble(),
+      (logicalSize.height * widget.devicePixelRatio).roundToDouble(),
+    );
+  }
+
+  // Helper method to convert logical Offset to physical Offset
+  Offset _getPhysicalOffset(Offset logicalOffset) {
+    return Offset(
+      logicalOffset.dx * widget.devicePixelRatio,
+      logicalOffset.dy * widget.devicePixelRatio,
+    );
+  }
+
   // Platform messages are asynchronous, so we initialize in an async method.
   Future<void> _createSurface() async {
-    print("Creating surface... (Initial Size: ${widget.size})");
-
-    final currWidgetSize = widget.size;
+    final currPhysicalWidgetSize = _getPhysicalSize(widget.size);
+    debugPrint("Creating surface... (Physical Target: ${currPhysicalWidgetSize.width} x ${currPhysicalWidgetSize.height})");
     final newTextureId = await _interopPlugin.createSurface(
       widget.rendererIpcServerName,
-      currWidgetSize
+      currPhysicalWidgetSize
     );
 
     setState(() {
@@ -193,11 +212,13 @@ class _TriengineSurfaceState extends State<TriengineSurface> with SingleTickerPr
 
   // Recreate surface when renderer server name changes
   Future<void> _recreateSurfaceWithLoading() async {
-    print("Recreating surface for new renderer: ${widget.rendererIpcServerName}");
+    debugPrint("Recreating surface for new renderer: ${widget.rendererIpcServerName}");
     
     try {
       // Stop ticker first to prevent updates during recreation
       _ticker?.stop();
+      _ticker?.dispose();
+      _ticker = null;
       
       // Destroy existing surface & Create new surface with new renderer
       await _destroySurface();
@@ -222,7 +243,7 @@ class _TriengineSurfaceState extends State<TriengineSurface> with SingleTickerPr
 
   Future<void> _destroySurface() async {
     if (_textureId != null) {
-      print("Destroying surface... (Texture ID: $_textureId)");
+      debugPrint("Destroying surface... (Texture ID: $_textureId)");
       await _interopPlugin.destroySurface();
       _textureId = null;
     }
@@ -230,11 +251,12 @@ class _TriengineSurfaceState extends State<TriengineSurface> with SingleTickerPr
 
   // Resize surface with loading state management
   Future<void> _resizeSurfaceWithLoading(Size newSize) async {
-    print("Resizing surface to $newSize ... (Texture ID: $_textureId)");
-    
+    final newPhysicalSize = _getPhysicalSize(newSize);
+    debugPrint("Resizing surface to physical $newPhysicalSize ... (Texture ID: $_textureId)");
+
     try {
       if (_textureId != null) {
-        await _interopPlugin.resizeSurface(newSize);
+        await _interopPlugin.resizeSurface(newPhysicalSize);
       }
       
       // Reset resizing state on success
@@ -260,12 +282,15 @@ class _TriengineSurfaceState extends State<TriengineSurface> with SingleTickerPr
     if (renderBox == null) return null;
     
     final localPosition = renderBox.globalToLocal(globalMousePos);
-    final currWidgetSize = widget.size;
+    final currWidgetSize = widget.size; // Logical size of the widget
     
     // Check if the position is within the texture widget bounds
+    // NOTE: Perform the bounds check using the logical size (`currWidgetSize`).
     if (localPosition.dx >= 0 && localPosition.dx < currWidgetSize.width && 
         localPosition.dy >= 0 && localPosition.dy < currWidgetSize.height) {
-      return localPosition;
+      
+      // When passing the coordinates to C++, convert them to physical pixel coordinates before sending them.
+      return _getPhysicalOffset(localPosition);
     }
     
     return null;
@@ -365,17 +390,17 @@ class _TriengineSurfaceState extends State<TriengineSurface> with SingleTickerPr
     return MouseRegion(
       onEnter: (event) {
         // Mouse entered the texture area
-        //print("Mouse entered texture area (buttons: ${event.buttons})");
+        //debugPrint("Mouse entered texture area (buttons: ${event.buttons})");
         _currMouseButtonsState = event.buttons;
       },
       onExit: (event) {
         // Mouse exited the texture area
-        //print("Mouse exited texture area (buttons: ${event.buttons})");
+        //debugPrint("Mouse exited texture area (buttons: ${event.buttons})");
         _currMouseButtonsState = 0; // Reset current mouse button state
       },
       child: Texture(
         textureId: _textureId!,
-        filterQuality: FilterQuality.high,
+        filterQuality: widget.filterQuality,
       ),
     );
   }
@@ -385,18 +410,18 @@ class _TriengineSurfaceState extends State<TriengineSurface> with SingleTickerPr
     return MouseRegion(
       onEnter: (event) {
         // Mouse entered the texture area
-        //print("Mouse entered texture area (buttons: ${event.buttons})");
+        //debugPrint("Mouse entered texture area (buttons: ${event.buttons})");
         _currMouseButtonsState = event.buttons;
       },
       onExit: (event) {
         // Mouse exited the texture area
-        //print("Mouse exited texture area (buttons: ${event.buttons})");
+        //debugPrint("Mouse exited texture area (buttons: ${event.buttons})");
         _currMouseButtonsState = 0; // Reset current mouse button state
       },
       onHover: (event) {
         // Handle mouse move (no drag)
         // https://api.flutter.dev/flutter/widgets/MouseRegion-class.html
-        //print("Mouse hover at position: ${event.position} (event.buttons: ${event.buttons})");
+        //debugPrint("Mouse hover at position: ${event.position} (event.buttons: ${event.buttons})");
 
         // Send mouse move event only when no buttons are pressed
         if (_currMouseButtonsState == 0) {
@@ -411,7 +436,7 @@ class _TriengineSurfaceState extends State<TriengineSurface> with SingleTickerPr
         onPointerMove: (event) {
           // Handle mouse move (drag)
           // https://api.flutter.dev/flutter/widgets/Listener-class.html
-          //print("Mouse drag at position: ${event.position} (event.buttons: ${event.buttons})");
+          //debugPrint("Mouse drag at position: ${event.position} (event.buttons: ${event.buttons})");
 
           final localPos = _globalScreenPos2LocalTexturePos(event.position);
           if (localPos == null) { return; }
@@ -422,7 +447,7 @@ class _TriengineSurfaceState extends State<TriengineSurface> with SingleTickerPr
         },
         onPointerDown: (event) {
           // Handle mouse button press
-          //print("Mouse button pressed at position: ${event.position} (event.buttons: ${event.buttons})");
+          //debugPrint("Mouse button pressed at position: ${event.position} (event.buttons: ${event.buttons})");
 
           final localPos = _globalScreenPos2LocalTexturePos(event.position);
           if (localPos == null) { return; }
@@ -441,11 +466,11 @@ class _TriengineSurfaceState extends State<TriengineSurface> with SingleTickerPr
 
           // Only send event if we detected a valid button
           if (button != null) {
-            //print("Mouse button pressed: $button (buttons: ${event.buttons})");
+            //debugPrint("Mouse button pressed: $button (buttons: ${event.buttons})");
             int mods = _calculateModifierKeysWithMouse(event.buttons);
             _interopPlugin.sendMouseButtonEvent(localPos, button, ButtonAction.press, mods);
           } else {
-            print("Warning: Unknown button pressed (buttons: ${event.buttons})");
+            debugPrint("Warning: Unknown button pressed (buttons: ${event.buttons})");
           }
 
           // Update current mouse button state after press
@@ -453,7 +478,7 @@ class _TriengineSurfaceState extends State<TriengineSurface> with SingleTickerPr
         },
         onPointerUp: (event) {
           // Handle mouse button release
-          //print("Mouse button released at position: ${event.position} (event.buttons: ${event.buttons})");
+          //debugPrint("Mouse button released at position: ${event.position} (event.buttons: ${event.buttons})");
 
           final localPos = _globalScreenPos2LocalTexturePos(event.position);
           if (localPos == null) { return; }
@@ -469,7 +494,7 @@ class _TriengineSurfaceState extends State<TriengineSurface> with SingleTickerPr
           } else if (releasedButtons & kMiddleMouseButton != 0) {
             button = MouseButton.middle;
           } else {
-            print("Warning: Unknown button released");
+            debugPrint("Warning: Unknown button released");
           }
           
           // Only send event if we detected a valid button release
@@ -484,17 +509,17 @@ class _TriengineSurfaceState extends State<TriengineSurface> with SingleTickerPr
         onPointerSignal: (event) {
           // Handle mouse scroll
           if (event is PointerScrollEvent) {
-            //print("Mouse scroll event (event.scrollDelta: ${event.scrollDelta.toString()})");
+            //debugPrint("Mouse scroll event (event.scrollDelta: ${event.scrollDelta.toString()})");
 
             final localPos = _globalScreenPos2LocalTexturePos(event.position);
             if (localPos == null) { return; }
-
+            
             _interopPlugin.sendMouseScrollEvent(event.scrollDelta);
           }
         },
         child: Texture(
           textureId: _textureId!,
-          filterQuality: FilterQuality.high,
+          filterQuality: widget.filterQuality,
         ),
       ),
     );

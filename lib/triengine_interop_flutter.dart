@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'triengine_interop_flutter_platform_interface.dart';
 
@@ -40,7 +41,7 @@ class TriengineInteropFlutterPlugin {
       });
       return textureId;
     } on PlatformException catch (e) {
-      print("Failed to create surface: '${e.message}'.");
+      debugPrint("Failed to create surface: '${e.message}'.");
       return null;
     }
   }
@@ -49,7 +50,7 @@ class TriengineInteropFlutterPlugin {
     try {
       await _channel.invokeMethod('destroySurface');
     } on PlatformException catch (e) {
-      print("Failed to destroy surface: '${e.message}'.");
+      debugPrint("Failed to destroy surface: '${e.message}'.");
     }
   }
 
@@ -74,7 +75,7 @@ class TriengineInteropFlutterPlugin {
         'mods': mods,
       });
     } on PlatformException catch (e) {
-      print("Failed to send mouse button event: '${e.message}'.");
+      debugPrint("Failed to send mouse button event: '${e.message}'.");
     }
   }
 
@@ -86,7 +87,7 @@ class TriengineInteropFlutterPlugin {
         'mods': mods,
       });
     } on PlatformException catch (e) {
-      print("Failed to send mouse move event: '${e.message}'.");
+      debugPrint("Failed to send mouse move event: '${e.message}'.");
     }
   }
 
@@ -101,7 +102,7 @@ class TriengineInteropFlutterPlugin {
         'yoffset': normalizedScrollOffsetY,
       });
     } on PlatformException catch (e) {
-      print("Failed to send mouse scroll event: '${e.message}'.");
+      debugPrint("Failed to send mouse scroll event: '${e.message}'.");
     }
   }
 
