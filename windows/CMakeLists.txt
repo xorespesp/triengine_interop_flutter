@@ -59,11 +59,14 @@ target_compile_definitions(${PLUGIN_NAME} PRIVATE
 target_include_directories(${PLUGIN_NAME} INTERFACE
     "${CMAKE_CURRENT_SOURCE_DIR}/include")
 
+target_link_libraries(${PLUGIN_NAME} PRIVATE 
+    flutter
+    flutter_wrapper_plugin)
+
 ###############################################################################
-# Third-party dependencies
 include(FetchContent)
 
-# ===== Fmt Library =====
+# ----- Fmt Library -----
 # Ref: https://fmt.dev/11.1/get-started/
 message(STATUS "Fetching fmt library...")
 FetchContent_Declare(
@@ -78,36 +81,31 @@ set(FMT_DOC OFF CACHE BOOL "" FORCE)
 set(FMT_UNICODE ON CACHE BOOL "" FORCE)
 FetchContent_MakeAvailable(fmt)
 
-# ===== Boost Libraries =====
+# ----- Boost Library ----
 # See: https://stackoverflow.com/q/72913306
 message(STATUS "Fetching boost...")
-set(BOOST_INCLUDE_LIBRARIES interprocess date_time program_options)
-set(BOOST_ENABLE_CMAKE ON)
-set(FETCHCONTENT_QUIET FALSE) # Needed to print downloading progress
 FetchContent_Declare(
     Boost
-    URL https://github.com/boostorg/boost/releases/download/boost-1.88.0/boost-1.88.0-cmake.7z # downloading a zip release speeds up the download
-    USES_TERMINAL_DOWNLOAD TRUE 
-    GIT_PROGRESS TRUE   
+    URL "https://github.com/boostorg/boost/releases/download/boost-1.90.0/boost-1.90.0-cmake.7z" # downloading a zip release speeds up the download
+    USES_TERMINAL_DOWNLOAD TRUE
     DOWNLOAD_NO_EXTRACT FALSE
+    #FETCHCONTENT_QUIET FALSE # Needed to print downloading progress (CMake 3.25+)
 )
+set(BOOST_INCLUDE_LIBRARIES interprocess date_time CACHE STRING "" FORCE)
 FetchContent_MakeAvailable(Boost)
 
-###############################################################################
-
 target_link_libraries(${PLUGIN_NAME} PRIVATE 
-    flutter
-    flutter_wrapper_plugin
-    # DirectX11 dependencies.
+    # DirectX11 dependencies
     d3d11
     dxgi
     d3dcompiler
-    # Third-party dependencies.
+    # Third-party dependencies
     fmt::fmt
     Boost::interprocess
     Boost::date_time
-    Boost::program_options
 )
+
+###############################################################################
 
 # List of absolute paths to libraries that should be bundled with the plugin.
 # This list could contain prebuilt libraries, or libraries created by an
