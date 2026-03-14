@@ -20,10 +20,10 @@ void main() {
   });
 
   test('getPlatformVersion', () async {
-    TriengineInteropFlutterPlugin triengineInteropFlutterPlugin = TriengineInteropFlutterPlugin();
+    TriengineInteropFlutterPlugin plugin = TriengineInteropFlutterPlugin();
     MockTriengineInteropFlutterPluginPlatform fakePlatform = MockTriengineInteropFlutterPluginPlatform();
     TriengineInteropFlutterPluginPlatform.instance = fakePlatform;
 
-    expect(await triengineInteropFlutterPlugin.getPlatformVersion(), '42');
+    expect(await plugin.getPlatformVersion(), '42');
   });
 }
