@@ -273,6 +273,7 @@ class _TriengineScenePageState extends State<TriengineScenePage> with TickerProv
               child: TriengineSurface(
                 rendererIpcServerName: widget.rendererIpcServerName,
                 size: Size(availWidth, availHeight),
+                devicePixelRatio: View.of(context).devicePixelRatio,
               ),
             ),
           );
