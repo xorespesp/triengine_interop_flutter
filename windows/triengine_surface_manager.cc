@@ -693,6 +693,8 @@ bool triengine_surface_manager::_initialize(
     }
 
     // Base full-screen quad rendering shader template with preprocessor conditionals
+    // (Screen quad shader code for rendering a shared texture flipped along the Y-axis, 
+    //  with compile-time selection of whether to flip and whether to perform RGBA<->BGRA conversion)
     static const std::string shaderTemplate = R"hlsl(
         Texture2D g_texture : register(t0);
         SamplerState g_sampler : register(s0);
