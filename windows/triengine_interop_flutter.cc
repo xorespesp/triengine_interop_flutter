@@ -11,6 +11,9 @@
 
 #include "utils/debug_utils.hh"
 
+// triengine_interop protocol enums are referenced below as `ipc_proto::...`.
+namespace ipc_proto = triengine_interop::surface::proto;
+
 namespace triengine_interop_flutter
 {
     // static

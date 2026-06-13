@@ -8,10 +8,11 @@
 #include <memory>
 #include <atomic>
 
+#include <triengine_interop/surface/proto/surface_proto.hh>
+#include <triengine_interop/surface/surface_consumer.hh>
+
 #include "utils/spin_lock.hh"
 #include "utils/win32_utils.hh"
-#include "ipc_proto.hh"
-#include "ipc_service.hh"
 
 using Microsoft::WRL::ComPtr;
 
@@ -45,16 +46,16 @@ public:
     bool send_mouse_button_event(
         int32_t x,
         int32_t y,
-        ipc_proto::mouse_button_type button,
-        ipc_proto::button_action_type action,
-        ipc_proto::modifier_button_type mods
+        triengine_interop::surface::proto::mouse_button_type button,
+        triengine_interop::surface::proto::button_action_type action,
+        triengine_interop::surface::proto::modifier_button_type mods
     );
 
     [[nodiscard]]
     bool send_mouse_move_event(
         int32_t x,
         int32_t y,
-        ipc_proto::modifier_button_type mods
+        triengine_interop::surface::proto::modifier_button_type mods
     );
 
     [[nodiscard]]
@@ -80,28 +81,31 @@ private:
         DXGI_FORMAT frame_dxgi_format
     );
 
+    // Create the Flutter-facing render target (a SHARED render texture, its exported
+    // NT handle, and an RTV) on the consumer's device.
+    [[nodiscard]]
+    bool _create_render_target(
+        int32_t frame_width,
+        int32_t frame_height,
+        DXGI_FORMAT frame_dxgi_format,
+        ComPtr<ID3D11Texture2D>& out_texture,
+        utils::unique_handle& out_handle,
+        ComPtr<ID3D11RenderTargetView>& out_rtv
+    );
+
 private:
     // api lock for thread safety
     mutable utils::spin_lock _api_lock;
 
-    // Process/IPC
-    std::shared_ptr<ipc_client> _ipc_cli;
-    utils::unique_handle _renderer_process_handle;
+    // Shared-surface consumer (owns the IPC connection + the D3D device/surface interop)
+    triengine_interop::surface::surface_consumer _consumer;
 
-    // D3D Resources (DX11.2 API base)
-    ComPtr<ID3D11Device2> _dx11_device2;
-    ComPtr<ID3D11DeviceContext2> _dx11_device_context2;
-    ComPtr<ID3D11Texture2D> _dx11_shared_texture; // shared texture from the renderer process
-    ComPtr<IDXGIKeyedMutex> _dxgi_shared_texture_mutex; // KeyedMutex for the shared texture
-    ComPtr<ID3D11Texture2D> _dx11_shared_texture_copy; // copy of the shared texture (temporary texture)
+    // Present target owned by the manager: a SHARED render texture whose handle is
+    // handed to the Flutter engine. Created on _consumer.get_dx11_device().
     ComPtr<ID3D11Texture2D> _dx11_render_texture; // render texture, to be used in Flutter
     utils::unique_handle _dx11_render_texture_handle; // shared handle for the render texture (to be used in Flutter)
-
+    
     // D3D Pipeline Resources
-    ComPtr<ID3D11VertexShader> _dx11_vertex_shader;
-    ComPtr<ID3D11PixelShader> _dx11_pixel_shader;
-    ComPtr<ID3D11SamplerState> _dx11_sampler_state;
-    ComPtr<ID3D11ShaderResourceView> _dx11_srv;
     ComPtr<ID3D11RenderTargetView> _dx11_rtv;
 
     int32_t _frame_width{ 0 };

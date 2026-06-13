@@ -22,10 +22,6 @@ list(APPEND PLUGIN_SOURCES
     "triengine_interop_flutter.hh"
     "triengine_surface_manager.cc"
     "triengine_surface_manager.hh"
-    "ipc_proto.hh"
-    "ipc_service.cc"
-    "ipc_service.hh"
-    "utils/bit_cast.hh"
     "utils/spin_lock.hh"
     "utils/string_codecvt.hh"
     "utils/debug_utils.hh"
@@ -81,28 +77,28 @@ set(FMT_DOC OFF CACHE BOOL "" FORCE)
 set(FMT_UNICODE ON CACHE BOOL "" FORCE)
 FetchContent_MakeAvailable(fmt)
 
-# ----- Boost Library ----
-# See: https://stackoverflow.com/q/72913306
-message(STATUS "Fetching boost...")
+# ----- triengine_interop -----
+# IPC transport + rendering protocol & DX11 shared-surface toolkit (consumer)
+# shared with the Triengine renderer process. Brings Boost.Interprocess transitively.
+message(STATUS "Fetching triengine_interop...")
 FetchContent_Declare(
-    Boost
-    URL "https://github.com/boostorg/boost/releases/download/boost-1.90.0/boost-1.90.0-cmake.7z" # downloading a zip release speeds up the download
-    USES_TERMINAL_DOWNLOAD TRUE
-    DOWNLOAD_NO_EXTRACT FALSE
-    #FETCHCONTENT_QUIET FALSE # Needed to print downloading progress (CMake 3.25+)
+    triengine_interop
+    GIT_REPOSITORY https://github.com/xorespesp/triengine_interop.git
+    GIT_TAG 0fd7c39fe5b96a6d65fd6268a0a9e90ea0255e5d
+    GIT_PROGRESS TRUE
+    EXCLUDE_FROM_ALL # Added in CMake 3.28
 )
-set(BOOST_INCLUDE_LIBRARIES interprocess date_time CACHE STRING "" FORCE)
-FetchContent_MakeAvailable(Boost)
+FetchContent_MakeAvailable(triengine_interop)
 
-target_link_libraries(${PLUGIN_NAME} PRIVATE 
+target_link_libraries(${PLUGIN_NAME} PRIVATE
     # DirectX11 dependencies
     d3d11
     dxgi
     d3dcompiler
     # Third-party dependencies
     fmt::fmt
-    Boost::interprocess
-    Boost::date_time
+    Triengine::interop
+    Triengine::interop_surface
 )
 
 ###############################################################################
