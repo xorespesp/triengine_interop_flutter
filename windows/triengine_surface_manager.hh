@@ -64,6 +64,13 @@ public:
     );
 
     [[nodiscard]]
+    bool send_key_event(
+        triengine_interop::surface::proto::key_button_type key,
+        triengine_interop::surface::proto::button_action_type action,
+        triengine_interop::surface::proto::modifier_button_type mods
+    );
+
+    [[nodiscard]]
     bool render_frame();
     
     [[nodiscard]]

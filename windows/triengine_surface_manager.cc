@@ -170,6 +170,25 @@ bool triengine_surface_manager::send_mouse_scroll_event(
     return true;
 }
 
+bool triengine_surface_manager::send_key_event(
+    const ipc_proto::key_button_type key,
+    const ipc_proto::button_action_type action,
+    const ipc_proto::modifier_button_type mods)
+{
+    std::scoped_lock lk{ _api_lock };
+    if (!this->is_created()) {
+        LOG_ERROR("Surface manager is not created.");
+        return false;
+    }
+
+    if (std::errc{} != _consumer.send_key_event(key, action, mods)) {
+        LOG_ERROR("Failed to send key event.");
+        return false;
+    }
+
+    return true;
+}
+
 bool triengine_surface_manager::render_frame()
 {
     std::scoped_lock lk{ _api_lock };

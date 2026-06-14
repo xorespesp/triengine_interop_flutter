@@ -16,6 +16,95 @@ class ButtonAction {
   static const int repeat = 2;  // ACTION_REPEAT
 }
 
+// Key button constants (mirror triengine_interop::surface::proto::key_button_type).
+class KeyButton {
+  static const int unknown = 0; // KEY_UNKNOWN
+
+  static const int a = 1;  // KEY_A
+  static const int b = 2;
+  static const int c = 3;
+  static const int d = 4;
+  static const int e = 5;
+  static const int f = 6;
+  static const int g = 7;
+  static const int h = 8;
+  static const int i = 9;
+  static const int j = 10;
+  static const int k = 11;
+  static const int l = 12;
+  static const int m = 13;
+  static const int n = 14;
+  static const int o = 15;
+  static const int p = 16;
+  static const int q = 17;
+  static const int r = 18;
+  static const int s = 19;
+  static const int t = 20;
+  static const int u = 21;
+  static const int v = 22;
+  static const int w = 23;
+  static const int x = 24;
+  static const int y = 25;
+  static const int z = 26; // KEY_Z
+
+  static const int digit0 = 27; // KEY_0
+  static const int digit1 = 28;
+  static const int digit2 = 29;
+  static const int digit3 = 30;
+  static const int digit4 = 31;
+  static const int digit5 = 32;
+  static const int digit6 = 33;
+  static const int digit7 = 34;
+  static const int digit8 = 35;
+  static const int digit9 = 36; // KEY_9
+
+  static const int f1 = 37; // KEY_F1
+  static const int f2 = 38;
+  static const int f3 = 39;
+  static const int f4 = 40;
+  static const int f5 = 41;
+  static const int f6 = 42;
+  static const int f7 = 43;
+  static const int f8 = 44;
+  static const int f9 = 45;
+  static const int f10 = 46;
+  static const int f11 = 47;
+  static const int f12 = 48; // KEY_F12
+
+  static const int escape = 49;   // KEY_ESCAPE
+  static const int back = 50;     // KEY_BACK (backspace)
+  static const int enter = 51;    // KEY_RETURN
+  static const int space = 52;    // KEY_SPACE
+  static const int left = 53;     // KEY_LEFT
+  static const int up = 54;       // KEY_UP
+  static const int right = 55;    // KEY_RIGHT
+  static const int down = 56;     // KEY_DOWN
+  static const int multiply = 57; // KEY_MULTIPLY
+  static const int add = 58;      // KEY_ADD
+  static const int subtract = 59; // KEY_SUBTRACT
+  static const int divide = 60;   // KEY_DIVIDE
+
+  static const int tab = 61;      // KEY_TAB
+  static const int delete = 62;   // KEY_DELETE
+  static const int insert = 63;   // KEY_INSERT
+  static const int home = 64;     // KEY_HOME
+  static const int end = 65;      // KEY_END
+  static const int pageUp = 66;   // KEY_PAGE_UP
+  static const int pageDown = 67; // KEY_PAGE_DOWN
+
+  static const int minus = 68;      // KEY_MINUS      - _
+  static const int equal = 69;      // KEY_EQUAL      = +
+  static const int comma = 70;      // KEY_COMMA      , <
+  static const int period = 71;     // KEY_PERIOD     . >
+  static const int semicolon = 72;  // KEY_SEMICOLON  ; :
+  static const int slash = 73;      // KEY_SLASH      / ?
+  static const int backslash = 74;  // KEY_BACKSLASH  \ |
+  static const int lbracket = 75;   // KEY_LBRACKET   [ {
+  static const int rbracket = 76;   // KEY_RBRACKET   ] }
+  static const int apostrophe = 77; // KEY_APOSTROPHE ' "
+  static const int grave = 78;      // KEY_GRAVE      ` ~
+}
+
 // Modifier constants
 class Modifier {
   static const int none = 0;
@@ -103,6 +192,18 @@ class TriengineInteropFlutterPlugin {
       });
     } on PlatformException catch (e) {
       debugPrint("Failed to send mouse scroll event: '${e.message}'.");
+    }
+  }
+
+  Future<void> sendKeyEvent(int key, int action, int mods) async {
+    try {
+      await _channel.invokeMethod('sendKeyEvent', {
+        'key': key,
+        'action': action,
+        'mods': mods,
+      });
+    } on PlatformException catch (e) {
+      debugPrint("Failed to send key event: '${e.message}'.");
     }
   }
 

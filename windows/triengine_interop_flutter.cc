@@ -317,6 +317,42 @@ namespace triengine_interop_flutter
                 result->Error("MOUSE_EVENT_FAILED", "Failed to send mouse scroll event.");
             }
         }
+        else if (method_call.method_name().compare("sendKeyEvent") == 0)
+        {
+            if (!surface_manager_) {
+                result->Error("NotInitialized", "Surface manager not initialized.");
+                return;
+            }
+
+            const auto* const args = std::get_if<flutter::EncodableMap>(method_call.arguments());
+            if (!args) {
+                result->Error("INVALID_ARGUMENTS", "Expected a map of arguments.");
+                return;
+            }
+
+            const auto key = static_cast<ipc_proto::key_button_type>(
+                std::get<int32_t>(args->at(flutter::EncodableValue{ "key" }))
+            );
+            const auto action = static_cast<ipc_proto::button_action_type>(
+                std::get<int32_t>(args->at(flutter::EncodableValue{ "action" }))
+            );
+            const auto mods = static_cast<ipc_proto::modifier_button_type>(
+                std::get<int32_t>(args->at(flutter::EncodableValue{ "mods" }))
+            );
+
+            LOG_TRACE("sendKeyEvent: key={}, action={}, mods=0x{:X}"
+                , static_cast<std::underlying_type_t<ipc_proto::key_button_type>>(key)
+                , static_cast<std::underlying_type_t<ipc_proto::button_action_type>>(action)
+                , static_cast<std::underlying_type_t<ipc_proto::modifier_button_type>>(mods)
+            );
+
+            const bool success = surface_manager_->send_key_event(key, action, mods);
+            if (success) {
+                result->Success();
+            } else {
+                result->Error("KEY_EVENT_FAILED", "Failed to send key event.");
+            }
+        }
         else if (method_call.method_name().compare("getPlatformVersion") == 0)
         {
             std::ostringstream version_stream;

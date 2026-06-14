@@ -48,6 +48,95 @@ int _calculateModifierKeysWithMouse(int mouseButtons) {
   return mods;
 }
 
+// Maps Flutter logical keys to triengine proto key codes (KeyButton). Keys absent from
+// this table are not forwarded to the renderer.
+final Map<LogicalKeyboardKey, int> _logicalKeyToKeyButton = {
+  LogicalKeyboardKey.keyA: KeyButton.a,
+  LogicalKeyboardKey.keyB: KeyButton.b,
+  LogicalKeyboardKey.keyC: KeyButton.c,
+  LogicalKeyboardKey.keyD: KeyButton.d,
+  LogicalKeyboardKey.keyE: KeyButton.e,
+  LogicalKeyboardKey.keyF: KeyButton.f,
+  LogicalKeyboardKey.keyG: KeyButton.g,
+  LogicalKeyboardKey.keyH: KeyButton.h,
+  LogicalKeyboardKey.keyI: KeyButton.i,
+  LogicalKeyboardKey.keyJ: KeyButton.j,
+  LogicalKeyboardKey.keyK: KeyButton.k,
+  LogicalKeyboardKey.keyL: KeyButton.l,
+  LogicalKeyboardKey.keyM: KeyButton.m,
+  LogicalKeyboardKey.keyN: KeyButton.n,
+  LogicalKeyboardKey.keyO: KeyButton.o,
+  LogicalKeyboardKey.keyP: KeyButton.p,
+  LogicalKeyboardKey.keyQ: KeyButton.q,
+  LogicalKeyboardKey.keyR: KeyButton.r,
+  LogicalKeyboardKey.keyS: KeyButton.s,
+  LogicalKeyboardKey.keyT: KeyButton.t,
+  LogicalKeyboardKey.keyU: KeyButton.u,
+  LogicalKeyboardKey.keyV: KeyButton.v,
+  LogicalKeyboardKey.keyW: KeyButton.w,
+  LogicalKeyboardKey.keyX: KeyButton.x,
+  LogicalKeyboardKey.keyY: KeyButton.y,
+  LogicalKeyboardKey.keyZ: KeyButton.z,
+
+  LogicalKeyboardKey.digit0: KeyButton.digit0,
+  LogicalKeyboardKey.digit1: KeyButton.digit1,
+  LogicalKeyboardKey.digit2: KeyButton.digit2,
+  LogicalKeyboardKey.digit3: KeyButton.digit3,
+  LogicalKeyboardKey.digit4: KeyButton.digit4,
+  LogicalKeyboardKey.digit5: KeyButton.digit5,
+  LogicalKeyboardKey.digit6: KeyButton.digit6,
+  LogicalKeyboardKey.digit7: KeyButton.digit7,
+  LogicalKeyboardKey.digit8: KeyButton.digit8,
+  LogicalKeyboardKey.digit9: KeyButton.digit9,
+
+  LogicalKeyboardKey.f1: KeyButton.f1,
+  LogicalKeyboardKey.f2: KeyButton.f2,
+  LogicalKeyboardKey.f3: KeyButton.f3,
+  LogicalKeyboardKey.f4: KeyButton.f4,
+  LogicalKeyboardKey.f5: KeyButton.f5,
+  LogicalKeyboardKey.f6: KeyButton.f6,
+  LogicalKeyboardKey.f7: KeyButton.f7,
+  LogicalKeyboardKey.f8: KeyButton.f8,
+  LogicalKeyboardKey.f9: KeyButton.f9,
+  LogicalKeyboardKey.f10: KeyButton.f10,
+  LogicalKeyboardKey.f11: KeyButton.f11,
+  LogicalKeyboardKey.f12: KeyButton.f12,
+
+  LogicalKeyboardKey.escape: KeyButton.escape,
+  LogicalKeyboardKey.backspace: KeyButton.back,
+  LogicalKeyboardKey.enter: KeyButton.enter,
+  LogicalKeyboardKey.numpadEnter: KeyButton.enter,
+  LogicalKeyboardKey.space: KeyButton.space,
+  LogicalKeyboardKey.arrowLeft: KeyButton.left,
+  LogicalKeyboardKey.arrowUp: KeyButton.up,
+  LogicalKeyboardKey.arrowRight: KeyButton.right,
+  LogicalKeyboardKey.arrowDown: KeyButton.down,
+  LogicalKeyboardKey.numpadMultiply: KeyButton.multiply,
+  LogicalKeyboardKey.numpadAdd: KeyButton.add,
+  LogicalKeyboardKey.numpadSubtract: KeyButton.subtract,
+  LogicalKeyboardKey.numpadDivide: KeyButton.divide,
+
+  LogicalKeyboardKey.tab: KeyButton.tab,
+  LogicalKeyboardKey.delete: KeyButton.delete,
+  LogicalKeyboardKey.insert: KeyButton.insert,
+  LogicalKeyboardKey.home: KeyButton.home,
+  LogicalKeyboardKey.end: KeyButton.end,
+  LogicalKeyboardKey.pageUp: KeyButton.pageUp,
+  LogicalKeyboardKey.pageDown: KeyButton.pageDown,
+
+  LogicalKeyboardKey.minus: KeyButton.minus,
+  LogicalKeyboardKey.equal: KeyButton.equal,
+  LogicalKeyboardKey.comma: KeyButton.comma,
+  LogicalKeyboardKey.period: KeyButton.period,
+  LogicalKeyboardKey.semicolon: KeyButton.semicolon,
+  LogicalKeyboardKey.slash: KeyButton.slash,
+  LogicalKeyboardKey.backslash: KeyButton.backslash,
+  LogicalKeyboardKey.bracketLeft: KeyButton.lbracket,
+  LogicalKeyboardKey.bracketRight: KeyButton.rbracket,
+  LogicalKeyboardKey.quoteSingle: KeyButton.apostrophe, // apostrophe (' "), 0x27
+  LogicalKeyboardKey.backquote: KeyButton.grave,
+};
+
 class TriengineSurface extends StatefulWidget {
   final String rendererIpcServerName;
   final Size size;
@@ -74,6 +163,10 @@ class _TriengineSurfaceState extends State<TriengineSurface> with SingleTickerPr
   
   // Track current mouse button state for move events
   int _currMouseButtonsState = 0;
+
+  // Focus node for routing keyboard events to the surface. Focus is requested when the
+  // user interacts with the surface (pointer down), so key events flow to the renderer.
+  final FocusNode _focusNode = FocusNode(debugLabel: 'TriengineSurface');
   
   // Loading state management
   bool _isRecreating = false;
@@ -169,6 +262,7 @@ class _TriengineSurfaceState extends State<TriengineSurface> with SingleTickerPr
     });
     _textureId = null;
     _ticker?.dispose();
+    _focusNode.dispose();
     super.dispose();
   }
 
@@ -339,6 +433,30 @@ class _TriengineSurfaceState extends State<TriengineSurface> with SingleTickerPr
     }
   }
 
+  // Translate a Flutter key event and forward it to the renderer. Returns handled for
+  // keys we recognize so they aren't also consumed as text/shortcuts elsewhere.
+  KeyEventResult _handleKeyEvent(FocusNode node, KeyEvent event) {
+    final int? key = _logicalKeyToKeyButton[event.logicalKey];
+    if (key == null) {
+      return KeyEventResult.ignored; // Unmapped key: let Flutter handle it
+    }
+
+    final int action;
+    if (event is KeyDownEvent) {
+      action = ButtonAction.press;
+    } else if (event is KeyRepeatEvent) {
+      action = ButtonAction.repeat;
+    } else if (event is KeyUpEvent) {
+      action = ButtonAction.release;
+    } else {
+      return KeyEventResult.ignored;
+    }
+
+    final int mods = _calculateModifierKeys();
+    _interopPlugin.sendKeyEvent(key, action, mods);
+    return KeyEventResult.handled;
+  }
+
   @override
   Widget build(BuildContext context) {
     final currWidgetSize = widget.size;
@@ -454,7 +572,10 @@ class _TriengineSurfaceState extends State<TriengineSurface> with SingleTickerPr
 
   // Texture widget for the surface rendering, with enabled mouse interaction
   Widget _buildSurfaceTextureWidget() {
-    return MouseRegion(
+    return Focus(
+      focusNode: _focusNode,
+      onKeyEvent: _handleKeyEvent,
+      child: MouseRegion(
       onEnter: (event) {
         // Mouse entered the texture area
         //debugPrint("Mouse entered texture area (buttons: ${event.buttons})");
@@ -505,6 +626,9 @@ class _TriengineSurfaceState extends State<TriengineSurface> with SingleTickerPr
         onPointerDown: (event) {
           // Handle mouse button press
           //debugPrint("Mouse button pressed at position: ${event.position} (event.buttons: ${event.buttons})");
+
+          // Route keyboard input to the surface once the user interacts with it.
+          _focusNode.requestFocus();
 
           final localPos = _globalScreenPos2LocalTexturePos(event.position);
           if (localPos == null) { return; }
@@ -581,6 +705,7 @@ class _TriengineSurfaceState extends State<TriengineSurface> with SingleTickerPr
           textureId: _textureId!,
           filterQuality: widget.filterQuality,
         ),
+      ),
       ),
     );
   }
