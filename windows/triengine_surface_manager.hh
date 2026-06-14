@@ -7,6 +7,8 @@
 #include <string_view>
 #include <memory>
 #include <atomic>
+#include <optional>
+#include <cstdint>
 
 #include <triengine_interop/surface/proto/surface_proto.hh>
 #include <triengine_interop/surface/surface_consumer.hh>
@@ -32,12 +34,17 @@ public:
 
     bool is_created() const;
 
+    // Initial frame-rate cap applied at connect.
+    //   nullopt : adaptive (derived from the local displays).
+    //   0       : uncapped.
+    //   N (> 0) : cap at N fps.
     [[nodiscard]]
     bool create(
         std::string_view renderer_ipc_server_name,
-        int32_t frame_width, 
-        int32_t frame_height, 
-        FlutterDesktopPixelFormat frame_format
+        int32_t frame_width,
+        int32_t frame_height,
+        FlutterDesktopPixelFormat frame_format,
+        std::optional<uint32_t> max_fps = std::nullopt
     );
 
     void destroy();
@@ -75,17 +82,25 @@ public:
     
     [[nodiscard]]
     bool resize_frame(
-        int32_t frame_width, 
+        int32_t frame_width,
         int32_t frame_height
     );
+
+    // Change the renderer's frame-rate cap at runtime.
+    //   nullopt : derive adaptively from the local displays.
+    //   0       : uncapped.
+    //   N (> 0) : cap at N fps.
+    [[nodiscard]]
+    bool change_max_fps(std::optional<uint32_t> max_fps);
 
 private:
     [[nodiscard]]
     bool _initialize(
         std::string_view renderer_ipc_server_name,
-        int32_t frame_width, 
-        int32_t frame_height, 
-        DXGI_FORMAT frame_dxgi_format
+        int32_t frame_width,
+        int32_t frame_height,
+        DXGI_FORMAT frame_dxgi_format,
+        std::optional<uint32_t> max_fps
     );
 
     // Create the Flutter-facing render target (a SHARED render texture, its exported

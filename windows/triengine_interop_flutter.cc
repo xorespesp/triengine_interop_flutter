@@ -8,6 +8,9 @@
 
 #include <memory>
 #include <sstream>
+#include <optional>
+#include <string>
+#include <cstdint>
 
 #include "utils/debug_utils.hh"
 
@@ -67,6 +70,15 @@ namespace triengine_interop_flutter
             const auto width = std::get<int32_t>(args->at(flutter::EncodableValue{ "width" }));
             const auto height = std::get<int32_t>(args->at(flutter::EncodableValue{ "height" }));
 
+            // Optional initial frame-rate cap applied at connect. Absent/null = adaptive,
+            // an integer = explicit cap (0 == uncapped).
+            std::optional<uint32_t> max_fps;
+            if (const auto it = args->find(flutter::EncodableValue{ "maxFps" }); it != args->end()) {
+                if (const auto* const v = std::get_if<int32_t>(&it->second)) {
+                    max_fps = static_cast<uint32_t>(*v);
+                }
+            }
+
             constexpr FlutterDesktopGpuSurfaceType flutter_gpu_surface_type = 
                 kFlutterDesktopGpuSurfaceTypeDxgiSharedHandle;
                 //kFlutterDesktopGpuSurfaceTypeD3d11Texture2D; // NOTE: Not supported in flutter 3.32.6
@@ -78,9 +90,10 @@ namespace triengine_interop_flutter
             surface_manager_ = std::make_unique<triengine_surface_manager>();
             if (!surface_manager_->create(
                 renderer_ipc_server_name,
-                width, 
-                height, 
-                flutter_gpu_surface_texture_format))
+                width,
+                height,
+                flutter_gpu_surface_texture_format,
+                max_fps))
             {
                 result->Error("SURFACE_INIT_FAILED", "Failed to initialize surface manager.");
                 return;
@@ -215,6 +228,35 @@ namespace triengine_interop_flutter
             }
             
             result->Success();
+        }
+        else if (method_call.method_name().compare("changeMaxFps") == 0)
+        {
+            if (!surface_manager_) {
+                result->Error("NotInitialized", "Surface manager not initialized.");
+                return;
+            }
+
+            const auto* const args = std::get_if<flutter::EncodableMap>(method_call.arguments());
+            if (!args) {
+                result->Error("INVALID_ARGUMENTS", "Expected a map of arguments.");
+                return;
+            }
+
+            // `maxFps` is null for the adaptive cap, or an integer for an explicit cap
+            // (0 == uncapped). A non-integer (null) leaves the optional unset.
+            std::optional<uint32_t> max_fps;
+            const auto& max_fps_value = args->at(flutter::EncodableValue{ "maxFps" });
+            if (const auto* const v = std::get_if<int32_t>(&max_fps_value)) {
+                max_fps = static_cast<uint32_t>(*v);
+            }
+
+            LOG_TRACE("changeMaxFps: {}", max_fps ? std::to_string(*max_fps) : "adaptive");
+
+            if (surface_manager_->change_max_fps(max_fps)) {
+                result->Success();
+            } else {
+                result->Error("CHANGE_MAX_FPS_FAILED", "Failed to change max fps.");
+            }
         }
         else if (method_call.method_name().compare("sendMouseButtonEvent") == 0)
         {

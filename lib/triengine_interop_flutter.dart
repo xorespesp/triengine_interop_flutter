@@ -121,12 +121,17 @@ class Modifier {
 class TriengineInteropFlutterPlugin {
   static const MethodChannel _channel = MethodChannel('triengine_interop_flutter/channel');
 
-  Future<int?> createSurface(String rendererIpcServerName, Size initialSize) async {
+  /// Create the surface and connect to the renderer.
+  ///
+  /// [maxFps] is the initial frame-rate cap applied at connect: null = adaptive
+  /// (derived from the local displays), 0 = uncapped, N = cap at N fps.
+  Future<int?> createSurface(String rendererIpcServerName, Size initialSize, {int? maxFps}) async {
     try {
       final int? textureId = await _channel.invokeMethod('createSurface', {
         'ipcServerName': rendererIpcServerName,
         'width': initialSize.width.round(),
         'height': initialSize.height.round(),
+        'maxFps': maxFps,
       });
       return textureId;
     } on PlatformException catch (e) {
@@ -152,6 +157,20 @@ class TriengineInteropFlutterPlugin {
       'width': newSize.width.round(),
       'height': newSize.height.round(),
     });
+  }
+
+  /// Change the renderer frame-rate cap at runtime.
+  ///
+  /// [maxFps] null = adaptive (derived from the local displays),
+  /// 0 = uncapped, N = cap at N fps.
+  Future<void> changeMaxFps(int? maxFps) async {
+    try {
+      await _channel.invokeMethod('changeMaxFps', {
+        'maxFps': maxFps,
+      });
+    } on PlatformException catch (e) {
+      debugPrint("Failed to change max fps: '${e.message}'.");
+    }
   }
 
   Future<void> sendMouseButtonEvent(Offset position, int button, int action, int mods) async {

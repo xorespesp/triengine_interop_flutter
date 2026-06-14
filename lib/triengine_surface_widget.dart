@@ -137,18 +137,58 @@ final Map<LogicalKeyboardKey, int> _logicalKeyToKeyButton = {
   LogicalKeyboardKey.backquote: KeyButton.grave,
 };
 
+// Issues imperative, session-level commands to a [TriengineSurface] (operations
+// that are not tied to the texture's geometry or pointer input, such as the
+// renderer frame-rate cap). Attach it via [TriengineSurface.controller]; the
+// widget binds itself on mount and unbinds on dispose. Commands are no-ops (and
+// log) while the controller is detached or the surface has not been created yet,
+// so the surface widget stays the single owner of the surface lifecycle.
+class TriengineSurfaceController {
+  _TriengineSurfaceState? _state;
+
+  void _attach(_TriengineSurfaceState state) {
+    _state = state;
+  }
+
+  void _detach(_TriengineSurfaceState state) {
+    if (identical(_state, state)) {
+      _state = null;
+    }
+  }
+
+  // Whether a mounted surface is currently bound to this controller.
+  bool get isAttached => _state != null;
+
+  /// Change the renderer frame-rate cap at runtime.
+  /// [maxFps] null = adaptive, 0 = uncapped, N = cap at N fps.
+  Future<void> changeMaxFps(int? maxFps) async {
+    final state = _state;
+    if (state == null) {
+      debugPrint('TriengineSurfaceController is not attached; ignoring changeMaxFps.');
+      return;
+    }
+    await state._changeMaxFps(maxFps);
+  }
+}
+
 class TriengineSurface extends StatefulWidget {
   final String rendererIpcServerName;
   final Size size;
   final double devicePixelRatio;
   final FilterQuality filterQuality;
+  final TriengineSurfaceController? controller;
+  // Initial frame-rate cap applied at connect (also reapplied on surface recreation).
+  // null = adaptive, 0 = uncapped, N = cap at N fps.
+  final int? initialMaxFps;
 
-  const TriengineSurface({ 
-    super.key, 
+  const TriengineSurface({
+    super.key,
     required this.rendererIpcServerName,
-    required this.size, 
+    required this.size,
     this.devicePixelRatio = 1.0, // Default to 1.0 for logical pixel coordinates
     this.filterQuality = FilterQuality.none, // Default to none for better performance
+    this.controller,
+    this.initialMaxFps,
   });
 
   @override
@@ -160,6 +200,10 @@ class _TriengineSurfaceState extends State<TriengineSurface> with SingleTickerPr
   final GlobalKey _textureKey = GlobalKey();
   int? _textureId;
   Ticker? _ticker;
+
+  // The frame-rate cap currently in effect. Seeded from widget.initialMaxFps and
+  // updated by controller changeMaxFps calls.
+  int? _effectiveMaxFps;
   
   // Track current mouse button state for move events
   int _currMouseButtonsState = 0;
@@ -179,6 +223,8 @@ class _TriengineSurfaceState extends State<TriengineSurface> with SingleTickerPr
   @override
   void initState() {
     super.initState();
+    _effectiveMaxFps = widget.initialMaxFps;
+    widget.controller?._attach(this);
     _createSurface().catchError((error) {
       debugPrint("Error initializing surface: $error");
     });
@@ -193,8 +239,18 @@ class _TriengineSurfaceState extends State<TriengineSurface> with SingleTickerPr
      */
     super.didUpdateWidget(oldWidget);
     
+    // Rebind if the parent swapped the controller instance.
+    if (oldWidget.controller != widget.controller) {
+      oldWidget.controller?._detach(this);
+      widget.controller?._attach(this);
+    }
+
+    // A new initial-cap prop is an explicit override; adopt it as the effective cap.
+    if (widget.initialMaxFps != oldWidget.initialMaxFps) {
+      _effectiveMaxFps = widget.initialMaxFps;
+    }
+
     // Check if renderer server name has changed - requires surface recreation
-    // TODO: Use controller pattern?
     if (widget.rendererIpcServerName != oldWidget.rendererIpcServerName) {
       debugPrint("Renderer server name changed from '${oldWidget.rendererIpcServerName}' to '${widget.rendererIpcServerName}' - scheduling recreation");
       
@@ -253,6 +309,8 @@ class _TriengineSurfaceState extends State<TriengineSurface> with SingleTickerPr
 
   @override
   void dispose() {
+    widget.controller?._detach(this);
+
     // Cancel any pending recreation & resize operations
     _recreateDebounceTimer?.cancel();
     _resizeDebounceTimer?.cancel();
@@ -288,7 +346,8 @@ class _TriengineSurfaceState extends State<TriengineSurface> with SingleTickerPr
     debugPrint("Creating surface... (Physical Target: ${currPhysicalWidgetSize.width} x ${currPhysicalWidgetSize.height})");
     final newTextureId = await _interopPlugin.createSurface(
       widget.rendererIpcServerName,
-      currPhysicalWidgetSize
+      currPhysicalWidgetSize,
+      maxFps: _effectiveMaxFps,
     );
 
     setState(() {
@@ -341,6 +400,19 @@ class _TriengineSurfaceState extends State<TriengineSurface> with SingleTickerPr
       await _interopPlugin.destroySurface();
       _textureId = null;
     }
+  }
+
+  // Driven by TriengineSurfaceController. Forwards only while the surface exists,
+  // so the renderer session is guaranteed to be up before the cap is changed.
+  Future<void> _changeMaxFps(int? maxFps) async {
+    // The value is retained so a later surface recreation reconnects with it.
+    _effectiveMaxFps = maxFps;
+    if (_textureId == null) {
+      // Not connected yet: skip the notify; the retained value is applied at connect.
+      debugPrint("Surface is not ready; deferring changeMaxFps($maxFps) to connect.");
+      return;
+    }
+    await _interopPlugin.changeMaxFps(maxFps);
   }
 
   // Resize surface with loading state management

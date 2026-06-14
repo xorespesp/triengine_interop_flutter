@@ -128,11 +128,28 @@ class _TriengineScenePageState extends State<TriengineScenePage> with TickerProv
   static const double _splitterWidth = 4.0;
   static const Duration _animationDuration = Duration(milliseconds: 200);
 
+  // 런타임 프레임율 상한 프리셋. 
+  // null 값은 ADAPTIVE를 의미 (네이티브 consumer가 로컬 디스플레이 주사율로 해석)
+  static const List<({String label, int? value})> _maxFpsPresets = [
+    (label: 'ADAPTIVE', value: null),
+    (label: '30 fps', value: 30),
+    (label: '60 fps', value: 60),
+    (label: '90 fps', value: 90),
+    (label: '120 fps', value: 120),
+    (label: '144 fps', value: 144),
+    (label: '165 fps', value: 165),
+    (label: '200 fps', value: 200),
+    (label: '240 fps', value: 240),
+  ];
+
   late AnimationController _animationController;
   late Animation<double> _slideAnimation;
   bool _isRightPanelOpened = false; // 우측 패널의 열림 상태 여부 플래그
   bool _isSplitterMouseHovered = false; // splitter 위에 마우스가 hover되어 있는지 여부 플래그
   double _currRightPanelWidth = _defaultRightPanelWidth; // 메뉴 버튼 클릭시 열릴 (혹은 현재 열려있는) 우측 패널의 너비. splitter로 조절 가능
+
+  final _surfaceController = TriengineSurfaceController();
+  int? _selectedMaxFps; // 현재 선택된 max fps 상한. (null 값 == ADAPTIVE)
   
   @override
   void initState() {
@@ -274,6 +291,8 @@ class _TriengineScenePageState extends State<TriengineScenePage> with TickerProv
                 rendererIpcServerName: widget.rendererIpcServerName,
                 size: Size(availWidth, availHeight),
                 devicePixelRatio: View.of(context).devicePixelRatio,
+                controller: _surfaceController,
+                initialMaxFps: _selectedMaxFps, // connect 시점 cap을 UI 선택값과 일치시킴
               ),
             ),
           );
@@ -310,16 +329,49 @@ class _TriengineScenePageState extends State<TriengineScenePage> with TickerProv
           Expanded(
             child: Container(
               padding: const EdgeInsets.all(16.0),
-              child: const Column(
+              child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  // TODO: Add Controls...
+                  _buildMaxFpsControl(),
                 ],
               ),
             ),
           ),
         ],
       ),
+    );
+  }
+
+  Widget _buildMaxFpsControl() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text(
+          'Max FPS',
+          style: TextStyle(
+            color: Colors.white,
+            fontSize: 14,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+        const SizedBox(height: 8),
+        DropdownButton<int?>(
+          value: _selectedMaxFps,
+          isExpanded: true,
+          dropdownColor: Colors.black87,
+          style: const TextStyle(color: Colors.white),
+          items: _maxFpsPresets
+              .map((preset) => DropdownMenuItem<int?>(
+                    value: preset.value,
+                    child: Text(preset.label),
+                  ))
+              .toList(),
+          onChanged: (value) {
+            setState(() => _selectedMaxFps = value);
+            _surfaceController.changeMaxFps(value);
+          },
+        ),
+      ],
     );
   }
 } // class
