@@ -47,7 +47,7 @@ bool triengine_surface_manager::create(
     const int32_t frame_width,
     const int32_t frame_height,
     const FlutterDesktopPixelFormat frame_format,
-    const std::optional<uint32_t> max_fps)
+    const uint32_t max_fps)
 {
     std::scoped_lock lk{ _api_lock };
     
@@ -285,7 +285,7 @@ bool triengine_surface_manager::resize_frame(
 }
 
 bool triengine_surface_manager::change_max_fps(
-    const std::optional<uint32_t> max_fps)
+    const uint32_t max_fps)
 {
     std::scoped_lock lk{ _api_lock };
     if (!this->is_created()) {
@@ -306,7 +306,7 @@ bool triengine_surface_manager::_initialize(
     const int32_t frame_width,
     const int32_t frame_height,
     const DXGI_FORMAT frame_dxgi_format,
-    const std::optional<uint32_t> max_fps)
+    const uint32_t max_fps)
 {
     LOG_DEBUG("Connecting to IPC server '{}' ...", renderer_ipc_server_name);
 
@@ -324,7 +324,7 @@ bool triengine_surface_manager::_initialize(
     ipc_surface::surface_render_options cfg;
     cfg.flip_y = true;
     cfg.convert_rgba_to_bgra = false;
-    cfg.max_fps = max_fps; // nullopt -> adaptive, 0 -> uncapped, N -> cap at N fps
+    cfg.max_fps = max_fps; // 0 -> uncapped
     if (!_consumer.connect(
         renderer_ipc_server_name, 
         SIZE{ frame_width, frame_height }, 

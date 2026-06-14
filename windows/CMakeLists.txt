@@ -84,7 +84,7 @@ message(STATUS "Fetching triengine_interop...")
 FetchContent_Declare(
     triengine_interop
     GIT_REPOSITORY https://github.com/xorespesp/triengine_interop.git
-    GIT_TAG 50d3b59d7445f5de4a06ab7fac494f657167f022
+    GIT_TAG 6a1d2ea98652ebd2cf669ad6d92b8304589f05ea
     GIT_PROGRESS TRUE
     EXCLUDE_FROM_ALL # Added in CMake 3.28
 )

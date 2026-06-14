@@ -8,7 +8,6 @@
 
 #include <memory>
 #include <sstream>
-#include <optional>
 #include <string>
 #include <cstdint>
 
@@ -70,9 +69,8 @@ namespace triengine_interop_flutter
             const auto width = std::get<int32_t>(args->at(flutter::EncodableValue{ "width" }));
             const auto height = std::get<int32_t>(args->at(flutter::EncodableValue{ "height" }));
 
-            // Optional initial frame-rate cap applied at connect. Absent/null = adaptive,
-            // an integer = explicit cap (0 == uncapped).
-            std::optional<uint32_t> max_fps;
+            // Initial frame-rate cap applied at connect (0 == uncapped).
+            uint32_t max_fps = 0;
             if (const auto it = args->find(flutter::EncodableValue{ "maxFps" }); it != args->end()) {
                 if (const auto* const v = std::get_if<int32_t>(&it->second)) {
                     max_fps = static_cast<uint32_t>(*v);
@@ -242,15 +240,13 @@ namespace triengine_interop_flutter
                 return;
             }
 
-            // `maxFps` is null for the adaptive cap, or an integer for an explicit cap
-            // (0 == uncapped). A non-integer (null) leaves the optional unset.
-            std::optional<uint32_t> max_fps;
-            const auto& max_fps_value = args->at(flutter::EncodableValue{ "maxFps" });
-            if (const auto* const v = std::get_if<int32_t>(&max_fps_value)) {
+            // `maxFps` is a concrete cap (0 == uncapped).
+            uint32_t max_fps = 0;
+            if (const auto* const v = std::get_if<int32_t>(&args->at(flutter::EncodableValue{ "maxFps" }))) {
                 max_fps = static_cast<uint32_t>(*v);
             }
 
-            LOG_TRACE("changeMaxFps: {}", max_fps ? std::to_string(*max_fps) : "adaptive");
+            LOG_TRACE("changeMaxFps: {}", max_fps);
 
             if (surface_manager_->change_max_fps(max_fps)) {
                 result->Success();

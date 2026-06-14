@@ -137,9 +137,44 @@ final Map<LogicalKeyboardKey, int> _logicalKeyToKeyButton = {
   LogicalKeyboardKey.backquote: KeyButton.grave,
 };
 
+/// Frame-rate control policy for a [TriengineSurface].
+///
+/// [adaptive] is the only dynamic policy: the cap drops to 60 fps while idle and rises to
+/// an adaptive value (see [computeAdaptiveMaxFps], derived from the display refresh rate)
+/// during user interaction, trading renderer GPU for interaction freshness. Every other
+/// policy is a constant cap; [uncapped] removes the cap entirely.
+enum FrameRateControlPolicy {
+  adaptive(null),
+  uncapped(kMaxFpsUncapped),
+  cappedAt30(30),
+  cappedAt60(60),
+  cappedAt90(90),
+  cappedAt120(120),
+  cappedAt144(144),
+  cappedAt165(165),
+  cappedAt200(200),
+  cappedAt240(240);
+
+  const FrameRateControlPolicy(this.maxFps);
+
+  /// The fixed frame-rate cap (0 == uncapped) for constant policies, or null for [adaptive]
+  /// (which is resolved dynamically at runtime).
+  final int? maxFps;
+
+  /// Whether this policy uses the dynamic idle/active behavior.
+  bool get isAdaptive => maxFps == null;
+
+  /// Human-readable label for UI.
+  String get label {
+    if (this == FrameRateControlPolicy.adaptive) return 'Adaptive';
+    if (this == FrameRateControlPolicy.uncapped) return 'Uncapped';
+    return '$maxFps fps';
+  }
+}
+
 // Issues imperative, session-level commands to a [TriengineSurface] (operations
 // that are not tied to the texture's geometry or pointer input, such as the
-// renderer frame-rate cap). Attach it via [TriengineSurface.controller]; the
+// renderer frame-rate policy). Attach it via [TriengineSurface.controller]; the
 // widget binds itself on mount and unbinds on dispose. Commands are no-ops (and
 // log) while the controller is detached or the surface has not been created yet,
 // so the surface widget stays the single owner of the surface lifecycle.
@@ -159,15 +194,14 @@ class TriengineSurfaceController {
   // Whether a mounted surface is currently bound to this controller.
   bool get isAttached => _state != null;
 
-  /// Change the renderer frame-rate cap at runtime.
-  /// [maxFps] null = adaptive, 0 = uncapped, N = cap at N fps.
-  Future<void> changeMaxFps(int? maxFps) async {
+  /// Change the renderer frame-rate control policy at runtime.
+  Future<void> changeFrameRateControlPolicy(FrameRateControlPolicy policy) async {
     final state = _state;
     if (state == null) {
-      debugPrint('TriengineSurfaceController is not attached; ignoring changeMaxFps.');
+      debugPrint('TriengineSurfaceController is not attached; ignoring changeFrameRateControlPolicy.');
       return;
     }
-    await state._changeMaxFps(maxFps);
+    await state._changeFrameRateControlPolicy(policy);
   }
 }
 
@@ -177,9 +211,10 @@ class TriengineSurface extends StatefulWidget {
   final double devicePixelRatio;
   final FilterQuality filterQuality;
   final TriengineSurfaceController? controller;
-  // Initial frame-rate cap applied at connect (also reapplied on surface recreation).
-  // null = adaptive, 0 = uncapped, N = cap at N fps.
-  final int? initialMaxFps;
+  // Initial frame-rate control policy, applied at connect (and on recreation). Only the
+  // starting point: the live policy is owned by the State (_currentFrameRatePolicy) and may later diverge via
+  // the controller. Updating this prop re-applies it as an explicit override.
+  final FrameRateControlPolicy frameRateControlPolicy;
 
   const TriengineSurface({
     super.key,
@@ -188,7 +223,7 @@ class TriengineSurface extends StatefulWidget {
     this.devicePixelRatio = 1.0, // Default to 1.0 for logical pixel coordinates
     this.filterQuality = FilterQuality.none, // Default to none for better performance
     this.controller,
-    this.initialMaxFps,
+    this.frameRateControlPolicy = FrameRateControlPolicy.adaptive,
   });
 
   @override
@@ -201,10 +236,24 @@ class _TriengineSurfaceState extends State<TriengineSurface> with SingleTickerPr
   int? _textureId;
   Ticker? _ticker;
 
-  // The frame-rate cap currently in effect. Seeded from widget.initialMaxFps and
-  // updated by controller changeMaxFps calls.
-  int? _effectiveMaxFps;
-  
+  // Adaptive-policy tuning: idle cap, and the no-input grace before dropping back to it.
+  static const int _adaptiveIdleMaxFps = 60;
+  static const Duration _adaptiveIdleInputTimeout = Duration(milliseconds: 500);
+
+  // The current frame-rate control policy. Source of truth; seeded from
+  // widget.frameRateControlPolicy and may diverge after a controller
+  // changeFrameRateControlPolicy() call.
+  FrameRateControlPolicy _currentFrameRatePolicy = FrameRateControlPolicy.adaptive;
+
+  // The last frame-rate cap applied (kMaxFpsUncapped = uncapped), retained so a recreation
+  // reconnects with it. Driven by the policy: a constant for fixed policies, or idle/active
+  // for the adaptive policy.
+  int _lastAppliedMaxFps = kMaxFpsUncapped;
+
+  // Adaptive-policy interaction state: whether interaction is ongoing, and the no-input timer.
+  bool _isUserInteracting = false;
+  Timer? _idleInputTimer;
+
   // Track current mouse button state for move events
   int _currMouseButtonsState = 0;
 
@@ -223,7 +272,9 @@ class _TriengineSurfaceState extends State<TriengineSurface> with SingleTickerPr
   @override
   void initState() {
     super.initState();
-    _effectiveMaxFps = widget.initialMaxFps;
+    // Seed the policy and its non-interacting cap (adaptive starts idle; the first interaction bumps it).
+    _currentFrameRatePolicy = widget.frameRateControlPolicy;
+    _lastAppliedMaxFps = _maxFpsWhenNotInteracting();
     widget.controller?._attach(this);
     _createSurface().catchError((error) {
       debugPrint("Error initializing surface: $error");
@@ -245,9 +296,9 @@ class _TriengineSurfaceState extends State<TriengineSurface> with SingleTickerPr
       widget.controller?._attach(this);
     }
 
-    // A new initial-cap prop is an explicit override; adopt it as the effective cap.
-    if (widget.initialMaxFps != oldWidget.initialMaxFps) {
-      _effectiveMaxFps = widget.initialMaxFps;
+    // A new policy prop from the parent is an explicit override; adopt and apply it.
+    if (widget.frameRateControlPolicy != oldWidget.frameRateControlPolicy) {
+      _changeFrameRateControlPolicy(widget.frameRateControlPolicy);
     }
 
     // Check if renderer server name has changed - requires surface recreation
@@ -314,7 +365,8 @@ class _TriengineSurfaceState extends State<TriengineSurface> with SingleTickerPr
     // Cancel any pending recreation & resize operations
     _recreateDebounceTimer?.cancel();
     _resizeDebounceTimer?.cancel();
-    
+    _idleInputTimer?.cancel();
+
     _destroySurface().catchError((error) {
       debugPrint("Error deinitializing surface: $error");
     });
@@ -347,7 +399,7 @@ class _TriengineSurfaceState extends State<TriengineSurface> with SingleTickerPr
     final newTextureId = await _interopPlugin.createSurface(
       widget.rendererIpcServerName,
       currPhysicalWidgetSize,
-      maxFps: _effectiveMaxFps,
+      maxFps: _lastAppliedMaxFps,
     );
 
     setState(() {
@@ -402,14 +454,50 @@ class _TriengineSurfaceState extends State<TriengineSurface> with SingleTickerPr
     }
   }
 
-  // Driven by TriengineSurfaceController. Forwards only while the surface exists,
-  // so the renderer session is guaranteed to be up before the cap is changed.
-  Future<void> _changeMaxFps(int? maxFps) async {
-    // The value is retained so a later surface recreation reconnects with it.
-    _effectiveMaxFps = maxFps;
+  // Cap for the non-interacting state, per policy: idle cap for adaptive (the active cap is
+  // applied only transiently during interaction), or the fixed cap (uncapped == 0) otherwise.
+  int _maxFpsWhenNotInteracting() =>
+      _currentFrameRatePolicy.isAdaptive ? _adaptiveIdleMaxFps : _currentFrameRatePolicy.maxFps!;
+
+  // Driven by TriengineSurfaceController / a new policy prop. Switches the policy and
+  // applies its non-interacting cap (adaptive -> idle, awaiting interaction; fixed -> its cap).
+  // Idempotent: re-applying the active policy is a no-op (so the declarative prop and the
+  // imperative controller can both drive it without doubling work).
+  Future<void> _changeFrameRateControlPolicy(FrameRateControlPolicy policy) async {
+    if (policy == _currentFrameRatePolicy) { return; }
+    _currentFrameRatePolicy = policy;
+    _idleInputTimer?.cancel();
+    _isUserInteracting = false;
+    await _changeMaxFps(_maxFpsWhenNotInteracting());
+  }
+
+  // Called from the input handlers. For the adaptive policy, raises the cap to the active
+  // value on the first interaction, then debounces back to idle once input stops. No-op for
+  // fixed policies.
+  void _markUserInteraction() {
+    if (!_currentFrameRatePolicy.isAdaptive) { return; }
+
+    if (!_isUserInteracting) {
+      _isUserInteracting = true;
+      // idle -> active, immediately. Active cap is derived from the display refresh rate.
+      _changeMaxFps(computeAdaptiveMaxFps(View.of(context).display.refreshRate));
+    }
+
+    // Each interaction resets the grace period, so an ongoing drag stays at the active cap.
+    _idleInputTimer?.cancel();
+    _idleInputTimer = Timer(_adaptiveIdleInputTimeout, () {
+      _isUserInteracting = false;
+      _changeMaxFps(_adaptiveIdleMaxFps); // back to idle after input stops
+    });
+  }
+
+  // Low-level cap apply. Forwards only while the surface exists, so the renderer session is
+  // up before the cap changes; the value is retained so a recreation reconnects with it.
+  Future<void> _changeMaxFps(int maxFps) async {
+    _lastAppliedMaxFps = maxFps;
     if (_textureId == null) {
       // Not connected yet: skip the notify; the retained value is applied at connect.
-      debugPrint("Surface is not ready; deferring changeMaxFps($maxFps) to connect.");
+      debugPrint("Surface is not ready; max fps change ($maxFps) will be applied at connect.");
       return;
     }
     await _interopPlugin.changeMaxFps(maxFps);
@@ -526,6 +614,7 @@ class _TriengineSurfaceState extends State<TriengineSurface> with SingleTickerPr
 
     final int mods = _calculateModifierKeys();
     _interopPlugin.sendKeyEvent(key, action, mods);
+    _markUserInteraction();
     return KeyEventResult.handled;
   }
 
@@ -673,6 +762,9 @@ class _TriengineSurfaceState extends State<TriengineSurface> with SingleTickerPr
         // https://api.flutter.dev/flutter/widgets/MouseRegion-class.html
         //debugPrint("Mouse hover at position: ${event.position} (event.buttons: ${event.buttons})");
 
+        // Hovering over the surface counts as interaction (keeps the cap raised).
+        _markUserInteraction();
+
         // Send mouse move event only when no buttons are pressed
         if (_currMouseButtonsState == 0) {
           final localPos = _globalScreenPos2LocalTexturePos(event.position);
@@ -688,6 +780,10 @@ class _TriengineSurfaceState extends State<TriengineSurface> with SingleTickerPr
           // https://api.flutter.dev/flutter/widgets/Listener-class.html
           //debugPrint("Mouse drag at position: ${event.position} (event.buttons: ${event.buttons})");
 
+          // A drag is scene manipulation: keep the cap raised (before the bounds check so an
+          // off-widget drag still counts).
+          _markUserInteraction();
+
           final localPos = _globalScreenPos2LocalTexturePos(event.position);
           if (localPos == null) { return; }
 
@@ -701,6 +797,7 @@ class _TriengineSurfaceState extends State<TriengineSurface> with SingleTickerPr
 
           // Route keyboard input to the surface once the user interacts with it.
           _focusNode.requestFocus();
+          _markUserInteraction();
 
           final localPos = _globalScreenPos2LocalTexturePos(event.position);
           if (localPos == null) { return; }
@@ -732,6 +829,8 @@ class _TriengineSurfaceState extends State<TriengineSurface> with SingleTickerPr
         onPointerUp: (event) {
           // Handle mouse button release
           //debugPrint("Mouse button released at position: ${event.position} (event.buttons: ${event.buttons})");
+
+          _markUserInteraction();
 
           final int releasedButtons = _currMouseButtonsState & ~event.buttons;
 
@@ -766,6 +865,8 @@ class _TriengineSurfaceState extends State<TriengineSurface> with SingleTickerPr
           // Handle mouse scroll
           if (event is PointerScrollEvent) {
             //debugPrint("Mouse scroll event (event.scrollDelta: ${event.scrollDelta.toString()})");
+
+            _markUserInteraction(); // scroll = zoom = scene manipulation
 
             final localPos = _globalScreenPos2LocalTexturePos(event.position);
             if (localPos == null) { return; }

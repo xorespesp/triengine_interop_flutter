@@ -128,20 +128,6 @@ class _TriengineScenePageState extends State<TriengineScenePage> with TickerProv
   static const double _splitterWidth = 4.0;
   static const Duration _animationDuration = Duration(milliseconds: 200);
 
-  // 런타임 프레임율 상한 프리셋. 
-  // null 값은 ADAPTIVE를 의미 (네이티브 consumer가 로컬 디스플레이 주사율로 해석)
-  static const List<({String label, int? value})> _maxFpsPresets = [
-    (label: 'ADAPTIVE', value: null),
-    (label: '30 fps', value: 30),
-    (label: '60 fps', value: 60),
-    (label: '90 fps', value: 90),
-    (label: '120 fps', value: 120),
-    (label: '144 fps', value: 144),
-    (label: '165 fps', value: 165),
-    (label: '200 fps', value: 200),
-    (label: '240 fps', value: 240),
-  ];
-
   late AnimationController _animationController;
   late Animation<double> _slideAnimation;
   bool _isRightPanelOpened = false; // 우측 패널의 열림 상태 여부 플래그
@@ -149,7 +135,7 @@ class _TriengineScenePageState extends State<TriengineScenePage> with TickerProv
   double _currRightPanelWidth = _defaultRightPanelWidth; // 메뉴 버튼 클릭시 열릴 (혹은 현재 열려있는) 우측 패널의 너비. splitter로 조절 가능
 
   final _surfaceController = TriengineSurfaceController();
-  int? _selectedMaxFps; // 현재 선택된 max fps 상한. (null 값 == ADAPTIVE)
+  FrameRateControlPolicy _selectedPolicy = FrameRateControlPolicy.adaptive; // 현재 선택된 frame rate 제어 정책
   
   @override
   void initState() {
@@ -292,7 +278,7 @@ class _TriengineScenePageState extends State<TriengineScenePage> with TickerProv
                 size: Size(availWidth, availHeight),
                 devicePixelRatio: View.of(context).devicePixelRatio,
                 controller: _surfaceController,
-                initialMaxFps: _selectedMaxFps, // connect 시점 cap을 UI 선택값과 일치시킴
+                frameRateControlPolicy: _selectedPolicy, // connect 시점 정책을 UI 선택값과 일치시킴
               ),
             ),
           );
@@ -332,7 +318,7 @@ class _TriengineScenePageState extends State<TriengineScenePage> with TickerProv
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  _buildMaxFpsControl(),
+                  _buildFrameRateControlPolicyWidget(),
                 ],
               ),
             ),
@@ -342,12 +328,12 @@ class _TriengineScenePageState extends State<TriengineScenePage> with TickerProv
     );
   }
 
-  Widget _buildMaxFpsControl() {
+  Widget _buildFrameRateControlPolicyWidget() {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         const Text(
-          'Max FPS',
+          'Frame Rate Control Policy',
           style: TextStyle(
             color: Colors.white,
             fontSize: 14,
@@ -355,20 +341,21 @@ class _TriengineScenePageState extends State<TriengineScenePage> with TickerProv
           ),
         ),
         const SizedBox(height: 8),
-        DropdownButton<int?>(
-          value: _selectedMaxFps,
+        DropdownButton<FrameRateControlPolicy>(
+          value: _selectedPolicy,
           isExpanded: true,
           dropdownColor: Colors.black87,
           style: const TextStyle(color: Colors.white),
-          items: _maxFpsPresets
-              .map((preset) => DropdownMenuItem<int?>(
-                    value: preset.value,
-                    child: Text(preset.label),
+          items: FrameRateControlPolicy.values
+              .map((policy) => DropdownMenuItem<FrameRateControlPolicy>(
+                    value: policy,
+                    child: Text(policy.label),
                   ))
               .toList(),
-          onChanged: (value) {
-            setState(() => _selectedMaxFps = value);
-            _surfaceController.changeMaxFps(value);
+          onChanged: (policy) {
+            if (policy == null) return;
+            setState(() => _selectedPolicy = policy);
+            _surfaceController.changeFrameRateControlPolicy(policy);
           },
         ),
       ],

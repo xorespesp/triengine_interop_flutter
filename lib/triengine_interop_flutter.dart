@@ -118,14 +118,32 @@ class Modifier {
   static const int mouseM = 1 << 15;   // MOD_MOUSE_M
 }
 
+/// Frame-rate cap value that disables the cap (no limit). Mirrors the native
+/// `MAX_FPS_UNCAPPED`.
+const int kMaxFpsUncapped = 0;
+
+/// Compute an adaptive frame-rate cap from a display refresh rate.
+///
+/// Over-produces at 2x the refresh rate so consumed frames stay fresh, capped at 200 fps.
+/// Returns 200 fps when the refresh rate is unknown or invalid. The result is a frame-rate
+/// cap suitable for [TriengineInteropFlutterPlugin.changeMaxFps] or createSurface's `maxFps`.
+int computeAdaptiveMaxFps(double displayRefreshRate) {
+  const double overproduceFactor = 2.0;
+  const int maxAdaptiveFps = 200;
+  if (displayRefreshRate <= 1.0) {
+    return maxAdaptiveFps;
+  }
+  final int requested = (displayRefreshRate * overproduceFactor).floor();
+  return requested < maxAdaptiveFps ? requested : maxAdaptiveFps;
+}
+
 class TriengineInteropFlutterPlugin {
   static const MethodChannel _channel = MethodChannel('triengine_interop_flutter/channel');
 
   /// Create the surface and connect to the renderer.
   ///
-  /// [maxFps] is the initial frame-rate cap applied at connect: null = adaptive
-  /// (derived from the local displays), 0 = uncapped, N = cap at N fps.
-  Future<int?> createSurface(String rendererIpcServerName, Size initialSize, {int? maxFps}) async {
+  /// [maxFps] is the initial frame-rate cap applied at connect: 0 = uncapped, N = cap at N fps.
+  Future<int?> createSurface(String rendererIpcServerName, Size initialSize, {int maxFps = 0}) async {
     try {
       final int? textureId = await _channel.invokeMethod('createSurface', {
         'ipcServerName': rendererIpcServerName,
@@ -161,9 +179,8 @@ class TriengineInteropFlutterPlugin {
 
   /// Change the renderer frame-rate cap at runtime.
   ///
-  /// [maxFps] null = adaptive (derived from the local displays),
-  /// 0 = uncapped, N = cap at N fps.
-  Future<void> changeMaxFps(int? maxFps) async {
+  /// [maxFps] 0 = uncapped, N = cap at N fps.
+  Future<void> changeMaxFps(int maxFps) async {
     try {
       await _channel.invokeMethod('changeMaxFps', {
         'maxFps': maxFps,
