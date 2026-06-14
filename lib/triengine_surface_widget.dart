@@ -203,6 +203,17 @@ class TriengineSurfaceController {
     }
     await state._changeFrameRateControlPolicy(policy);
   }
+
+  /// Enable or disable forwarding of user input to the renderer at runtime. While disabled the
+  /// surface is display-only and, under the adaptive policy, stays pinned to its idle cap.
+  Future<void> setUserInteractionAllowed(bool allowed) async {
+    final state = _state;
+    if (state == null) {
+      debugPrint('TriengineSurfaceController is not attached; ignoring setUserInteractionAllowed.');
+      return;
+    }
+    await state._setUserInteractionAllowed(allowed);
+  }
 }
 
 class TriengineSurface extends StatefulWidget {
@@ -215,6 +226,11 @@ class TriengineSurface extends StatefulWidget {
   // starting point: the live policy is owned by the State (_currentFrameRatePolicy) and may later diverge via
   // the controller. Updating this prop re-applies it as an explicit override.
   final FrameRateControlPolicy frameRateControlPolicy;
+  // Whether pointer and keyboard input are forwarded to the renderer. When false the surface
+  // is display-only, and under the adaptive policy the frame-rate cap stays at its idle value.
+  // the live setting is owned by the State (_isUserInteractionAllowed) and may
+  // later diverge via the controller. Updating this prop re-applies it as an explicit override.
+  final bool allowUserInteraction;
 
   const TriengineSurface({
     super.key,
@@ -224,6 +240,7 @@ class TriengineSurface extends StatefulWidget {
     this.filterQuality = FilterQuality.none, // Default to none for better performance
     this.controller,
     this.frameRateControlPolicy = FrameRateControlPolicy.adaptive,
+    this.allowUserInteraction = true,
   });
 
   @override
@@ -254,6 +271,11 @@ class _TriengineSurfaceState extends State<TriengineSurface> with SingleTickerPr
   bool _isUserInteracting = false;
   Timer? _idleInputTimer;
 
+  // Whether input is forwarded to the renderer. Source of truth; seeded from
+  // widget.allowUserInteraction and may diverge after a controller setUserInteractionAllowed()
+  // call. While false the surface is display-only and the adaptive policy is pinned to its idle cap.
+  bool _isUserInteractionAllowed = true;
+
   // Track current mouse button state for move events
   int _currMouseButtonsState = 0;
 
@@ -274,6 +296,7 @@ class _TriengineSurfaceState extends State<TriengineSurface> with SingleTickerPr
     super.initState();
     // Seed the policy and its non-interacting cap (adaptive starts idle; the first interaction bumps it).
     _currentFrameRatePolicy = widget.frameRateControlPolicy;
+    _isUserInteractionAllowed = widget.allowUserInteraction;
     _lastAppliedMaxFps = _maxFpsWhenNotInteracting();
     widget.controller?._attach(this);
     _createSurface().catchError((error) {
@@ -299,6 +322,11 @@ class _TriengineSurfaceState extends State<TriengineSurface> with SingleTickerPr
     // A new policy prop from the parent is an explicit override; adopt and apply it.
     if (widget.frameRateControlPolicy != oldWidget.frameRateControlPolicy) {
       _changeFrameRateControlPolicy(widget.frameRateControlPolicy);
+    }
+
+    // A new allow-interaction prop from the parent is an explicit override; adopt and apply it.
+    if (widget.allowUserInteraction != oldWidget.allowUserInteraction) {
+      _setUserInteractionAllowed(widget.allowUserInteraction);
     }
 
     // Check if renderer server name has changed - requires surface recreation
@@ -469,6 +497,22 @@ class _TriengineSurfaceState extends State<TriengineSurface> with SingleTickerPr
     _idleInputTimer?.cancel();
     _isUserInteracting = false;
     await _changeMaxFps(_maxFpsWhenNotInteracting());
+  }
+
+  // Driven by TriengineSurfaceController / a new allow-interaction prop. Toggles whether input
+  // reaches the renderer (build() swaps between the interactive and display-only texture).
+  // Disabling also settles the adaptive policy back to its idle cap at once, since no later
+  // interaction can raise it, rather than waiting out the grace period.
+  Future<void> _setUserInteractionAllowed(bool allowed) async {
+    if (allowed == _isUserInteractionAllowed) { return; }
+    setState(() {
+      _isUserInteractionAllowed = allowed;
+    });
+    if (!allowed) {
+      _idleInputTimer?.cancel();
+      _isUserInteracting = false;
+      await _changeMaxFps(_maxFpsWhenNotInteracting());
+    }
   }
 
   // Called from the input handlers. For the adaptive policy, raises the cap to the active
@@ -656,7 +700,11 @@ class _TriengineSurfaceState extends State<TriengineSurface> with SingleTickerPr
       );
     }
     
-    return _buildSurfaceTextureWidget();
+    // Display-only when interaction is disabled: the disabled texture tracks the cursor's
+    // button state but forwards no pointer or key events to the renderer.
+    return _isUserInteractionAllowed
+        ? _buildSurfaceTextureWidget()
+        : _buildDisabledSurfaceTextureWidget();
   }
 
   Widget _buildLoadingIndicatorWidget(String text, TextStyle textStyle) {

@@ -136,6 +136,7 @@ class _TriengineScenePageState extends State<TriengineScenePage> with TickerProv
 
   final _surfaceController = TriengineSurfaceController();
   FrameRateControlPolicy _selectedPolicy = FrameRateControlPolicy.adaptive; // 현재 선택된 frame rate 제어 정책
+  bool _allowUserInteraction = true; // 사용자 입력(마우스/키보드)을 렌더러로 전달할지 여부
   
   @override
   void initState() {
@@ -278,7 +279,9 @@ class _TriengineScenePageState extends State<TriengineScenePage> with TickerProv
                 size: Size(availWidth, availHeight),
                 devicePixelRatio: View.of(context).devicePixelRatio,
                 controller: _surfaceController,
-                frameRateControlPolicy: _selectedPolicy, // connect 시점 정책을 UI 선택값과 일치시킴
+                // connect 시점의 widget 옵션들을 UI 선택값(초기값)과 일치시킴
+                frameRateControlPolicy: _selectedPolicy,
+                allowUserInteraction: _allowUserInteraction,
               ),
             ),
           );
@@ -319,6 +322,8 @@ class _TriengineScenePageState extends State<TriengineScenePage> with TickerProv
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   _buildFrameRateControlPolicyWidget(),
+                  const SizedBox(height: 24),
+                  _buildAllowUserInteractionWidget(),
                 ],
               ),
             ),
@@ -356,6 +361,37 @@ class _TriengineScenePageState extends State<TriengineScenePage> with TickerProv
             if (policy == null) return;
             setState(() => _selectedPolicy = policy);
             _surfaceController.changeFrameRateControlPolicy(policy);
+          },
+        ),
+      ],
+    );
+  }
+
+  Widget _buildAllowUserInteractionWidget() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text(
+          'User Interaction',
+          style: TextStyle(
+            color: Colors.white,
+            fontSize: 14,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+        const SizedBox(height: 8),
+        CheckboxListTile(
+          value: _allowUserInteraction,
+          contentPadding: EdgeInsets.zero,
+          controlAffinity: ListTileControlAffinity.leading,
+          title: const Text(
+            'Allow user interaction',
+            style: TextStyle(color: Colors.white),
+          ),
+          onChanged: (allowed) {
+            if (allowed == null) return;
+            setState(() => _allowUserInteraction = allowed);
+            _surfaceController.setUserInteractionAllowed(allowed);
           },
         ),
       ],
