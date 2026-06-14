@@ -296,6 +296,49 @@ class _TriengineSurfaceState extends State<TriengineSurface> with SingleTickerPr
     return null;
   }
 
+  // Convert a global position to local texture coordinates, clamped to the widget
+  // bounds. Unlike _globalScreenPos2LocalTexturePos this returns an in-bounds position
+  // instead of null for positions outside the widget, so it is used for button-release
+  // events that may occur outside the widget (e.g. a drag that ended off-widget). The
+  // renderer ignores the position on button events anyway. Returns null only when the
+  // render object is unavailable.
+  Offset? _globalScreenPos2LocalTexturePosClamped(Offset globalMousePos) {
+    final RenderBox? renderBox = _textureKey.currentContext?.findRenderObject() as RenderBox?;
+    if (renderBox == null) return null;
+
+    final localPosition = renderBox.globalToLocal(globalMousePos);
+    final currWidgetSize = widget.size; // Logical size of the widget
+
+    final clamped = Offset(
+      localPosition.dx.clamp(0.0, currWidgetSize.width),
+      localPosition.dy.clamp(0.0, currWidgetSize.height),
+    );
+    return _getPhysicalOffset(clamped);
+  }
+
+  // Forward release events for any buttons that went up while the pointer was outside
+  // the texture region. A drag can end off-widget and the corresponding pointer-up may
+  // never reach us; without this the renderer never sees the button-up and keeps
+  // manipulating the scene after the cursor returns.
+  void _syncReleasedButtons(int currentButtons, Offset globalPos) {
+    final int released = _currMouseButtonsState & ~currentButtons;
+    if (released == 0) { return; }
+
+    final localPos = _globalScreenPos2LocalTexturePosClamped(globalPos);
+    if (localPos == null) { return; }
+    final int mods = _calculateModifierKeysWithMouse(currentButtons);
+
+    if (released & kPrimaryMouseButton != 0) {
+      _interopPlugin.sendMouseButtonEvent(localPos, MouseButton.left, ButtonAction.release, mods);
+    }
+    if (released & kSecondaryMouseButton != 0) {
+      _interopPlugin.sendMouseButtonEvent(localPos, MouseButton.right, ButtonAction.release, mods);
+    }
+    if (released & kMiddleMouseButton != 0) {
+      _interopPlugin.sendMouseButtonEvent(localPos, MouseButton.middle, ButtonAction.release, mods);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final currWidgetSize = widget.size;
@@ -396,7 +439,11 @@ class _TriengineSurfaceState extends State<TriengineSurface> with SingleTickerPr
       onExit: (event) {
         // Mouse exited the texture area
         //debugPrint("Mouse exited texture area (buttons: ${event.buttons})");
-        _currMouseButtonsState = 0; // Reset current mouse button state
+
+        // Keep the pressed-button state while a button is held (see the enabled widget).
+        if (event.buttons == 0) {
+          _currMouseButtonsState = 0; // Reset only when no button is held
+        }
       },
       child: Texture(
         textureId: _textureId!,
@@ -411,12 +458,22 @@ class _TriengineSurfaceState extends State<TriengineSurface> with SingleTickerPr
       onEnter: (event) {
         // Mouse entered the texture area
         //debugPrint("Mouse entered texture area (buttons: ${event.buttons})");
+
+        // Reconcile any buttons released while the pointer was outside this region so
+        // the renderer doesn't stay stuck in a pressed state after the cursor returns.
+        _syncReleasedButtons(event.buttons, event.position);
         _currMouseButtonsState = event.buttons;
       },
       onExit: (event) {
         // Mouse exited the texture area
         //debugPrint("Mouse exited texture area (buttons: ${event.buttons})");
-        _currMouseButtonsState = 0; // Reset current mouse button state
+
+        // Keep the pressed-button state while a drag is in progress: the Listener keeps
+        // receiving the gesture outside this region, and clearing here would lose the
+        // release and leave the renderer stuck in a pressed state.
+        if (event.buttons == 0) {
+          _currMouseButtonsState = 0; // Reset only when no button is held
+        }
       },
       onHover: (event) {
         // Handle mouse move (no drag)
@@ -480,9 +537,6 @@ class _TriengineSurfaceState extends State<TriengineSurface> with SingleTickerPr
           // Handle mouse button release
           //debugPrint("Mouse button released at position: ${event.position} (event.buttons: ${event.buttons})");
 
-          final localPos = _globalScreenPos2LocalTexturePos(event.position);
-          if (localPos == null) { return; }
-
           final int releasedButtons = _currMouseButtonsState & ~event.buttons;
 
           // Determine which button was released by comparing with previous state
@@ -496,11 +550,17 @@ class _TriengineSurfaceState extends State<TriengineSurface> with SingleTickerPr
           } else {
             debugPrint("Warning: Unknown button released");
           }
-          
-          // Only send event if we detected a valid button release
+
+          // Always forward the release, even when the pointer is outside the texture
+          // bounds (e.g. the drag ended off-widget). Dropping it here would leave the
+          // renderer stuck in a pressed state. The position is clamped to the widget;
+          // the renderer ignores it on button events anyway.
           if (button != null) {
-            int mods = _calculateModifierKeysWithMouse(event.buttons);
-            _interopPlugin.sendMouseButtonEvent(localPos, button, ButtonAction.release, mods);
+            final localPos = _globalScreenPos2LocalTexturePosClamped(event.position);
+            if (localPos != null) {
+              int mods = _calculateModifierKeysWithMouse(event.buttons);
+              _interopPlugin.sendMouseButtonEvent(localPos, button, ButtonAction.release, mods);
+            }
           }
           
           // Update current mouse button state after release
