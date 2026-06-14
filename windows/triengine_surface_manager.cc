@@ -125,7 +125,8 @@ bool triengine_surface_manager::send_mouse_button_event(
         return false;
     }
 
-    if (std::errc{} != _consumer.send_mouse_button_event(x, y, button, action, mods)) {
+    if (std::errc{} != _consumer.send_mouse_button_event(
+        POINT{ x, y }, button, action, mods)) {
         LOG_ERROR("Failed to send mouse button event.");
         return false;
     }
@@ -144,7 +145,7 @@ bool triengine_surface_manager::send_mouse_move_event(
         return false;
     }
 
-    if (std::errc{} != _consumer.send_mouse_move_event(x, y, mods)) {
+    if (std::errc{} != _consumer.send_mouse_move_event(POINT{ x, y }, mods)) {
         LOG_ERROR("Failed to send mouse move event.");
         return false;
     }
@@ -243,7 +244,7 @@ bool triengine_surface_manager::resize_frame(
 
     // Resize the shared-surface side (the consumer requests the renderer resize and
     // recreates the shared texture / copy / SRV).
-    if (!_consumer.resize(frame_width, frame_height)) {
+    if (!_consumer.resize_frame(SIZE{ frame_width, frame_height })) {
         LOG_ERROR("Failed to resize the shared surface.");
         return false;
     }
@@ -284,7 +285,11 @@ bool triengine_surface_manager::_initialize(
     ipc_surface::surface_render_options cfg;
     cfg.flip_y = true;
     cfg.convert_rgba_to_bgra = false;
-    if (!_consumer.connect(renderer_ipc_server_name, frame_width, frame_height, cfg)) {
+    if (!_consumer.connect(
+        renderer_ipc_server_name, 
+        SIZE{ frame_width, frame_height }, 
+        cfg))
+    {
         LOG_ERROR("Failed to connect / create surface consumer");
         return false;
     }
@@ -295,8 +300,11 @@ bool triengine_surface_manager::_initialize(
     utils::unique_handle new_render_texture_handle;
     ComPtr<ID3D11RenderTargetView> new_rtv;
     if (!this->_create_render_target(
-        frame_width, frame_height, frame_dxgi_format,
-        new_render_texture, new_render_texture_handle, new_rtv))
+        frame_width, frame_height, 
+        frame_dxgi_format,
+        new_render_texture, 
+        new_render_texture_handle, 
+        new_rtv))
     {
         _consumer.disconnect();
         return false;
